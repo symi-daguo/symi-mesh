@@ -383,3 +383,56 @@ class TestOptimisticSwitch:
         # A genuine physical report (0x55 all off) must now apply.
         device.update_from_event(0x02, bytes([0x55]))
         assert device.state["switch_3"] is False
+
+
+class TestLoopBreaker:
+    """死循环熔断：窗口内写入超限熔断单实体，其余实体与集成不受影响。"""
+
+    def test_trips_after_limit_and_recovers(self) -> None:
+        import asyncio
+
+        from symi_mesh.knx_sync import SymiSyncEngine
+
+        async def run() -> None:
+            class FakeBus:
+                def __init__(self) -> None:
+                    self.fired = []
+
+                def async_fire(self, event, data):
+                    self.fired.append((event, data))
+
+            class FakeHass:
+                data = {}
+
+            hass = FakeHass()
+            hass.bus = FakeBus()
+            eng = SymiSyncEngine(
+                hass,
+                {"name": "t", "entities": ["switch.a", "switch.b"],
+                 "direction": "two_way", "enabled": True},
+            )
+            for _ in range(10):
+                eng._record_write("switch.a")
+            assert "switch.a" in eng._loop_disabled
+            assert "switch.b" not in eng._loop_disabled
+            assert hass.bus.fired[0][0] == "symi_mesh_loop_breaker"
+            # 9 次不触发
+            hass2 = FakeHass()
+            hass2.bus = FakeBus()
+            eng2 = SymiSyncEngine(
+                hass2,
+                {"name": "t2", "entities": ["switch.c"], "direction": "two_way",
+                 "enabled": True},
+            )
+            for _ in range(9):
+                eng2._record_write("switch.c")
+            assert "switch.c" not in eng2._loop_disabled
+            # 冷却过期后 _enqueue 自动恢复
+            eng._loop_disabled["switch.a"] = 0.0
+            try:
+                eng._enqueue("switch.a", {"state": "on"}, "switch", "switch", 1)
+            except AttributeError:
+                pass  # FakeHass 无 states；恢复逻辑已在异常前执行
+            assert "switch.a" not in eng._loop_disabled
+
+        asyncio.run(run())

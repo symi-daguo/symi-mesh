@@ -42,7 +42,7 @@
       },
       "knx_sync": {
         "title": "添加双向同步组",
-        "description": "选择至少两个实体建立同步关系（例如 KNX 开关 ↔ Mesh 开关）。\n{path_tip}\n\n下方两项为【全局】时间参数：保存后对全部同步组生效。",
+        "description": "选择至少两个实体建立同步关系（例如 KNX 开关 ↔ Mesh 开关），同一组内实体状态保持一致。\n{path_tip}",
         "data": {
           "name": "名称",
           "entities": "同步实体",

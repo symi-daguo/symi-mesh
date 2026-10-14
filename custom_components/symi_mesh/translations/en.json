@@ -34,7 +34,7 @@
       },
       "knx_sync": {
         "title": "Add bidirectional sync group",
-        "description": "Pick at least two entities to keep in sync (e.g. a KNX switch and a mesh switch).\n{path_tip}\n\nThe two timing values below are global (shared by all sync groups).",
+        "description": "Pick at least two entities to keep in sync (e.g. a KNX switch and a mesh switch). Entities in one group always share the same state.\n{path_tip}",
         "data": {
           "name": "Name",
           "entities": "Entities",

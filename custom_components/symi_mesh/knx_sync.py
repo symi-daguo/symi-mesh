@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from typing import TYPE_CHECKING, Any, Callable
 
 from .const import (
@@ -29,10 +30,14 @@ from .const import (
     DIRECTION_ONE_WAY,
     DIRECTION_TWO_WAY,
     DOMAIN,
+    EVENT_LOOP_BREAKER,
     EVENT_SYNC_APPLIED,
     FAN_ATTRIBUTES,
     FOLLOWER_QUIET_S,
     GROUP_LATCH_S,
+    LOOP_BREAKER_LIMIT,
+    LOOP_COOLDOWN_S,
+    LOOP_WINDOW_S,
     MAX_CONCURRENT_APPLIES,
     QUEUE_MAX_SIZE,
     SYNCABLE_DOMAINS,
@@ -390,6 +395,9 @@ class SymiSyncEngine:
         self._workers: list[asyncio.Task[None]] = []
         self._inflight_sem = asyncio.Semaphore(MAX_CONCURRENT_APPLIES)
         self._stopping = False
+        # 死循环熔断：每实体写入时间戳环形窗口 + 熔断恢复时间表
+        self._write_times: dict[str, deque[float]] = {}
+        self._loop_disabled: dict[str, float] = {}
 
     @property
     def group(self) -> dict[str, Any]:
@@ -442,6 +450,8 @@ class SymiSyncEngine:
         self._group_desired_until = 0.0
         self._group_master = None
         self._unavailable_log_ts.clear()
+        self._write_times.clear()
+        self._loop_disabled.clear()
 
     def _states_conflict(self, a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
         """True when both have an on/off-like state and they disagree."""
@@ -742,6 +752,13 @@ class SymiSyncEngine:
         seq: int,
     ) -> None:
         now = time.monotonic()
+        # 死循环熔断：被熔断的实体在冷却期内跳过一切写入，冷却后自动恢复。
+        until = self._loop_disabled.get(target_entity_id)
+        if until is not None:
+            if now < until:
+                return
+            self._loop_disabled.pop(target_entity_id, None)
+            _LOGGER.info("熔断冷却结束，自动恢复同步: %s", target_entity_id)
         # Never overwrite a recent master click with follower feedback.
         if now < self._authority_until.get(target_entity_id, 0.0):
             _LOGGER.debug("保护主控，跳过写回: %s", target_entity_id)
@@ -917,6 +934,34 @@ class SymiSyncEngine:
         else:
             await self._pace_outbound(gate_key, interval)
             await self.hass.services.async_call(domain, service, data, blocking=True)
+        self._record_write(target_entity_id)
+
+    def _record_write(self, entity_id: str) -> None:
+        """记录一次成功写入；滑动窗口内次数超限则熔断该实体。"""
+        now = time.monotonic()
+        dq = self._write_times.setdefault(entity_id, deque())
+        dq.append(now)
+        while dq and now - dq[0] > LOOP_WINDOW_S:
+            dq.popleft()
+        if len(dq) >= LOOP_BREAKER_LIMIT:
+            dq.clear()
+            self._loop_disabled[entity_id] = now + LOOP_COOLDOWN_S
+            _LOGGER.error(
+                "检测到疑似同步死循环：%s 在 %.0f 秒内被写入 %d 次，已熔断该实体 %.0f 秒"
+                "（其余实体不受影响，冷却结束后自动恢复）",
+                entity_id,
+                LOOP_WINDOW_S,
+                LOOP_BREAKER_LIMIT,
+                LOOP_COOLDOWN_S,
+            )
+            bus = getattr(self.hass, "bus", None)
+            if bus is not None:
+                bus.async_fire(
+                    EVENT_LOOP_BREAKER,
+                    {"group": self._group.get(CONF_NAME), "entity_id": entity_id,
+                     "window_s": LOOP_WINDOW_S, "limit": LOOP_BREAKER_LIMIT,
+                     "cooldown_s": LOOP_COOLDOWN_S},
+                )
 
     async def _paced_call(
         self,
