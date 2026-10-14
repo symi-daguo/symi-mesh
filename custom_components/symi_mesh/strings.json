@@ -3,7 +3,11 @@
     "step": {
       "user": {
         "title": "添加 Symi Mesh 集成",
-        "description": "选择要添加的内容：\n\n• **Mesh 网关**：通过 TCP 或串口连接网关，自动发现网关下的所有 Mesh 设备（按 MAC 生成唯一实体）。\n• **KNX 双向同步**：在任意 Home Assistant 实体之间建立双向同步（例如官方 KNX 实体 ↔ 本集成实体）。"
+        "description": "选择要添加的内容：",
+        "menu_options": {
+          "gateway": "Mesh 网关",
+          "knx_sync": "KNX 双向同步"
+        }
       },
       "gateway": {
         "title": "选择连接方式",

@@ -3,7 +3,11 @@
     "step": {
       "user": {
         "title": "Add Symi Mesh integration",
-        "description": "Choose what to add:\n\n• **Mesh gateway**: connect over TCP or serial; all mesh devices behind the gateway are discovered automatically (unique entities derived from MAC).\n• **KNX bidirectional sync**: sync state between any Home Assistant entities (e.g. official KNX entities and symi_mesh entities)."
+        "description": "Choose what to add:",
+        "menu_options": {
+          "gateway": "Mesh gateway",
+          "knx_sync": "KNX two-way sync"
+        }
       },
       "gateway": {
         "title": "Connection type",
