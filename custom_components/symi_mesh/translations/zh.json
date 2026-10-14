@@ -1,0 +1,118 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "添加 Symi Mesh 集成",
+        "description": "选择要添加的内容：\n\n• **Mesh 网关**：通过 TCP 或串口连接网关，自动发现网关下的所有 Mesh 设备（按 MAC 生成唯一实体）。\n• **KNX 双向同步**：在任意 Home Assistant 实体之间建立双向同步（例如官方 KNX 实体 ↔ 本集成实体）。"
+      },
+      "gateway": {
+        "title": "选择连接方式",
+        "description": "Mesh 网关支持 TCP（局域网，默认端口 4196）与串口（RS485/USB，115200 8N1）两种接入方式。\n\n检测到的串口：{ports}",
+        "data": {
+          "connection_type": "连接方式"
+        }
+      },
+      "gateway_tcp": {
+        "title": "TCP 连接参数",
+        "description": "填写网关的 IP 地址与 TCP 端口（默认 4196）。保存前会实际连通一次并读取设备列表验证。",
+        "data": {
+          "host": "IP 地址",
+          "port": "TCP 端口"
+        },
+        "data_description": {
+          "host": "Mesh 网关在局域网中的 IP，例如 192.168.1.10",
+          "port": "默认 4196"
+        }
+      },
+      "gateway_serial": {
+        "title": "串口连接参数",
+        "description": "填写串口设备路径与波特率（默认 115200）。\n\n检测到的串口：{ports}",
+        "data": {
+          "serial_port": "串口设备路径",
+          "baud_rate": "波特率"
+        },
+        "data_description": {
+          "serial_port": "例如 /dev/ttyUSB0 或 /dev/serial/by-id/... 完整路径",
+          "baud_rate": "默认 115200"
+        }
+      },
+      "knx_sync": {
+        "title": "添加双向同步组",
+        "description": "选择至少两个实体建立同步关系（例如 KNX 开关 ↔ Mesh 开关）。\n{path_tip}\n\n下方两项为【全局】时间参数：保存后对全部同步组生效。",
+        "data": {
+          "name": "名称",
+          "entities": "同步实体",
+          "direction": "同步方向",
+          "enabled": "启用同步",
+          "debounce_ms": "防抖时间（全局）",
+          "outbound_ms": "出队间隔（全局）"
+        },
+        "data_description": {
+          "name": "便于识别的中文名称，例如「客厅主灯 ↔ KNX 主灯」。",
+          "entities": "同一组内的实体状态将保持一致。",
+          "direction": "双向：任意一端驱动其余；单向：仅第一个驱动其余。",
+          "enabled": "关闭后保留配置但不执行同步。",
+          "debounce_ms": "状态变化后的合并等待时间，全部同步组共用。",
+          "outbound_ms": "连续两次写入之间的最小间隔，全部同步组共用。"
+        }
+      }
+    },
+    "error": {
+      "host_required": "请填写 IP 地址",
+      "serial_port_required": "请填写串口设备路径",
+      "cannot_connect": "无法连接网关，请检查地址/端口/串口，并确认网关已上线",
+      "name_required": "请填写名称",
+      "need_two_entities": "请至少选择两个实体",
+      "duplicate_entities": "实体列表中存在重复项"
+    },
+    "abort": {
+      "already_configured": "相同连接/实体组合的配置已存在"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "网关参数",
+        "description": "调整重连与上报行为。修改后自动重载集成。",
+        "data": {
+          "reconnect_interval": "重连基础间隔",
+          "enable_status_report": "启用设备状态上报",
+          "query_on_startup": "启动时查询一次状态"
+        },
+        "data_description": {
+          "reconnect_interval": "断线后的基础重连间隔（秒），实际等待按指数退避增长，最大 60 秒。",
+          "enable_status_report": "连接后向所有设备开启主动状态上报（0x10 指令）。",
+          "query_on_startup": "启动时对每台设备执行一次状态查询，用于识别三合一面板并同步初始状态。"
+        }
+      }
+    }
+  },
+  "selector": {
+    "connection_type": {
+      "options": {
+        "tcp": "TCP（局域网）",
+        "serial": "串口（RS485/USB）"
+      }
+    },
+    "direction": {
+      "options": {
+        "two_way": "双向同步",
+        "one_way": "单向同步（第一个 → 其余）"
+      }
+    }
+  },
+  "services": {
+    "reload": {
+      "name": "重新加载",
+      "description": "重新加载全部网关与同步组配置。"
+    },
+    "scan_devices": {
+      "name": "扫描设备",
+      "description": "重新向网关请求设备列表，发现新接入的 Mesh 设备。"
+    },
+    "describe": {
+      "name": "查看状态",
+      "description": "将各同步组队列与回环缓存状态写入日志（排障用，勿高频调用）。"
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Symi Mesh integration",
+        "description": "Choose what to add:\n\n• **Mesh gateway**: connect over TCP or serial; all mesh devices behind the gateway are discovered automatically (unique entities derived from MAC).\n• **KNX bidirectional sync**: sync state between any Home Assistant entities (e.g. official KNX entities and symi_mesh entities)."
+      },
+      "gateway": {
+        "title": "Connection type",
+        "description": "The mesh gateway supports TCP (LAN, default port 4196) and serial (RS485/USB, 115200 8N1).\n\nDetected serial ports: {ports}",
+        "data": {
+          "connection_type": "Connection type"
+        }
+      },
+      "gateway_tcp": {
+        "title": "TCP parameters",
+        "description": "Gateway IP address and TCP port (default 4196). Settings are validated by a live connection and device-list read before saving.",
+        "data": {
+          "host": "IP address",
+          "port": "TCP port"
+        }
+      },
+      "gateway_serial": {
+        "title": "Serial parameters",
+        "description": "Serial device path and baud rate (default 115200).\n\nDetected serial ports: {ports}",
+        "data": {
+          "serial_port": "Serial device path",
+          "baud_rate": "Baud rate"
+        }
+      },
+      "knx_sync": {
+        "title": "Add bidirectional sync group",
+        "description": "Pick at least two entities to keep in sync (e.g. a KNX switch and a mesh switch).\n{path_tip}\n\nThe two timing values below are global (shared by all sync groups).",
+        "data": {
+          "name": "Name",
+          "entities": "Entities",
+          "direction": "Direction",
+          "enabled": "Enabled",
+          "debounce_ms": "Debounce (global)",
+          "outbound_ms": "Outbound interval (global)"
+        }
+      }
+    },
+    "error": {
+      "host_required": "IP address is required",
+      "serial_port_required": "Serial device path is required",
+      "cannot_connect": "Cannot connect to the gateway. Check address/port/serial path and make sure the gateway is online.",
+      "name_required": "Name is required",
+      "need_two_entities": "Select at least two entities",
+      "duplicate_entities": "Duplicate entities in the list"
+    },
+    "abort": {
+      "already_configured": "An entry with the same connection/entity set already exists"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Gateway options",
+        "description": "Tune reconnection and reporting behaviour. Changes reload the integration automatically.",
+        "data": {
+          "reconnect_interval": "Reconnect base interval",
+          "enable_status_report": "Enable device status reporting",
+          "query_on_startup": "Query states once on startup"
+        }
+      }
+    }
+  },
+  "selector": {
+    "connection_type": {
+      "options": {
+        "tcp": "TCP (LAN)",
+        "serial": "Serial (RS485/USB)"
+      }
+    },
+    "direction": {
+      "options": {
+        "two_way": "Two-way",
+        "one_way": "One-way (first → rest)"
+      }
+    }
+  },
+  "services": {
+    "reload": {
+      "name": "Reload",
+      "description": "Reload all gateway and sync-group entries."
+    },
+    "scan_devices": {
+      "name": "Scan devices",
+      "description": "Re-request the device list from the gateway to pick up newly added mesh devices."
+    },
+    "describe": {
+      "name": "Describe",
+      "description": "Write sync queue/loop-cache snapshots to the log (diagnostics, do not call frequently)."
+    }
+  }
+}

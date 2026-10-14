@@ -1,0 +1,11 @@
+reload:
+  name: 重新加载
+  description: 重新加载全部网关与同步组配置。
+
+scan_devices:
+  name: 扫描设备
+  description: 重新向网关请求设备列表，发现新接入的 Mesh 设备。
+
+describe:
+  name: 查看状态
+  description: 将各同步组队列与回环缓存状态写入日志（排障用，勿高频调用）。
