@@ -401,6 +401,10 @@ class SymiMeshCoordinator:
         self, device: MeshDevice, channel: int, turn_on: bool
     ) -> None:
         assert self.transport is not None
+        # Optimistically update before building the packed state so rapid
+        # multi-channel toggles compose the correct current_state.
+        device.set_channel_state(channel, turn_on)
+        self._notify_update(device.mac_address)
         frame = self.transport.protocol.build_switch_control_frame(
             device.network_address,
             device.channels,

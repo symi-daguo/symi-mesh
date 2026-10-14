@@ -332,3 +332,54 @@ class TestDeviceModel:
         device.update_from_event(0x68, bytes([0x02]))
         assert device.is_three_in_one is True
         assert device.state["freshAirSwitch"] is True
+
+
+class TestOptimisticSwitch:
+    """Rapid multi-channel toggles must not read stale packed state."""
+
+    def _device(self) -> object:
+        registry = DeviceRegistry()
+        device, _ = registry.add_or_update(
+            {
+                "macAddress": "AA:BB:CC:DD:EE:FF",
+                "networkAddress": 0x0100,
+                "deviceType": 1,
+                "deviceSubType": 4,
+            }
+        )
+        return device
+
+    def test_optimistic_update_composes_packed_state(self) -> None:
+        device = self._device()
+        # 1-2-3-4 rapid toggle: each optimistic write keeps prior channels on.
+        device.set_channel_state(1, True)
+        assert device.get_current_switch_state() == 0x56
+        device.set_channel_state(2, True)
+        assert device.get_current_switch_state() == 0x5A
+        device.set_channel_state(3, True)
+        assert device.get_current_switch_state() == 0x6A
+        device.set_channel_state(4, True)
+        assert device.get_current_switch_state() == 0xAA
+
+    def test_stale_report_dropped_within_window(self) -> None:
+        device = self._device()
+        device.set_channel_state(3, True)  # optimistic: channel 3 on
+        assert device.state["switch_3"] is True
+        # A stale 0x80 report (0x5A: ch1+ch2 on, ch3 off) arrives while the
+        # optimistic window is still open -> must NOT bounce channel 3 off.
+        device.update_from_event(0x02, bytes([0x5A]))
+        assert device.state["switch_3"] is True
+
+    def test_matching_report_confirms_and_closes_window(self) -> None:
+        device = self._device()
+        device.set_channel_state(3, True, window_s=0.2)
+        # Matching report (0x6A: ch1+ch2+ch3 on) confirms optimistic state.
+        device.update_from_event(0x02, bytes([0x6A]))
+        assert device.state["switch_3"] is True
+
+    def test_report_applies_after_window_expires(self) -> None:
+        device = self._device()
+        device.set_channel_state(3, True, window_s=-1.0)  # window already expired
+        # A genuine physical report (0x55 all off) must now apply.
+        device.update_from_event(0x02, bytes([0x55]))
+        assert device.state["switch_3"] is False

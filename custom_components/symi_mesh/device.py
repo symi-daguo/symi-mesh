@@ -58,6 +58,8 @@ class DeviceInfo:
         self.registry = registry
         self.name = data.get("name") or self.generate_name()
         self.channels = self.get_channel_count()
+        # 乐观更新去抖窗口：channel -> 截止时间戳（下发控制后短暂忽略冲突回传）
+        self._optimistic_until: dict[int, float] = {}
 
     # -- identity -----------------------------------------------------------
 
@@ -347,15 +349,25 @@ class DeviceInfo:
         self.state["switchState"] = value
 
         changed = []
+        now = time.time()
         for i in range(self.channels):
             bit_value = (value >> (i * 2)) & 0x03
-            if bit_value in (0x01, 0x02):
-                new_state = bit_value == 0x02
-                key = f"switch_{i + 1}"
-                old_state = self.state.get(key)
-                if old_state is not None and old_state != new_state:
-                    changed.append({"button": i + 1, "oldState": old_state, "newState": new_state})
-                self.state[key] = new_state
+            if bit_value not in (0x01, 0x02):
+                continue
+            new_state = bit_value == 0x02
+            key = f"switch_{i + 1}"
+            # Optimistic-window debounce: right after we commanded this channel,
+            # accept only a matching report (confirm) and drop a conflicting
+            # stale report that would otherwise bounce the channel back.
+            until = self._optimistic_until.get(i + 1, 0.0)
+            if until > now:
+                if self.state.get(key) == new_state:
+                    self._optimistic_until.pop(i + 1, None)
+                continue
+            old_state = self.state.get(key)
+            if old_state is not None and old_state != new_state:
+                changed.append({"button": i + 1, "oldState": old_state, "newState": new_state})
+            self.state[key] = new_state
         return changed
 
     def get_current_switch_state(self) -> int | None:
@@ -374,6 +386,20 @@ class DeviceInfo:
         if self.channels == 1:
             return bool(self.state.get("switch"))
         return bool(self.state.get(f"switch_{channel}"))
+
+    def set_channel_state(self, channel: int, turn_on: bool, window_s: float = 0.5) -> None:
+        """Optimistically update a channel before sending a control frame.
+
+        Multi-channel switches encode every channel in one packed value, so a
+        rapid 1-2-3-4 toggle must not read a stale ``current_state`` (the 0x80
+        report for the previous toggle may not have arrived yet). Writing the
+        intended state immediately keeps ``get_current_switch_state`` correct.
+        """
+        if self.channels == 1:
+            self.state["switch"] = turn_on
+        else:
+            self.state[f"switch_{channel}"] = turn_on
+        self._optimistic_until[channel] = time.time() + window_s
 
     def to_dict(self) -> dict[str, Any]:
         return {
