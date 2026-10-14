@@ -85,6 +85,11 @@ class DeviceInfo:
     def update_last_seen(self) -> None:
         self.last_seen = time.time()
 
+    def update_from_pairs(self, pairs: list[tuple[int, bytes]]) -> None:
+        """Apply several (attr_type, params) pairs from one NODE_STATUS event."""
+        for attr_type, parameters in pairs:
+            self.update_from_event(attr_type, parameters)
+
     def update_from_event(self, attr_type: int, parameters: bytes) -> None:
         """Apply a 0x80 event payload to the local state (ported verbatim)."""
         self.update_last_seen()
@@ -146,6 +151,67 @@ class DeviceInfo:
                 self.state["cardInserted"] = card in (0x01, 0x1)
                 self.state["switch"] = self.state["cardInserted"]
 
+        elif attr_type == 0x07:
+            # SCENE_PANEL_EVENT: 2 bytes big-endian, 2 bits per key from the
+            # high end: key 1 = bits 14-15 ... key 8 = bits 0-1; 0x01 = pressed.
+            if len(parameters) >= 2:
+                value = (parameters[0] << 8) | parameters[1]
+                triggers = []
+                for i in range(8):
+                    bit_pos = (7 - i) * 2
+                    triggers.append(((value >> bit_pos) & 0x03) == 0x01)
+                self.state["sceneTriggers"] = triggers
+
+        elif attr_type == 0x0D:
+            # CTRL_SOURCE: 0 unknown, 1 local key, 2 mesh net, 3 dual-control.
+            if parameters:
+                self.state["lastSource"] = parameters[0]
+
+        elif attr_type == 0x0F:
+            # SOFT_VERSION: 3 bytes.
+            if len(parameters) >= 3:
+                self.state["softwareVersion"] = ".".join(str(b) for b in parameters[:3])
+
+        elif attr_type == 0x0B:
+            # BATTERY_LEVEL_STATUS: 1-100 %.
+            if parameters and 1 <= parameters[0] <= 100:
+                self.state["battery"] = parameters[0]
+
+        elif attr_type == 0x2A:
+            # SENSOR_WATER_ALARM: 0 normal, 1 alarm.
+            if parameters:
+                self.state["waterAlarm"] = parameters[0] == 0x01
+
+        elif attr_type == 0x2B:
+            # SENSOR_SMOKE_ALARM: 0 normal, 1 alarm.
+            if parameters:
+                self.state["smokeAlarm"] = parameters[0] == 0x01
+
+        elif attr_type == 0x2C:
+            # LOW_BATTERY_LEVEL_ALARM.
+            if parameters:
+                self.state["lowBattery"] = parameters[0] == 0x01
+
+        elif attr_type == 0x2D:
+            # TAMPER_ALARM.
+            if parameters:
+                self.state["tamper"] = parameters[0] == 0x01
+
+        elif attr_type == 0x1E:
+            # TMPC_KB_LOCK.
+            if parameters:
+                self.state["keyLock"] = parameters[0] == 0x01
+
+        elif attr_type == 0x1F:
+            # TMPC_VALVE.
+            if parameters:
+                self.state["valve"] = parameters[0] == 0x01
+
+        elif attr_type == 0x21:
+            # TMPC_SLEEP.
+            if parameters:
+                self.state["sleep"] = parameters[0] == 0x01
+
         elif attr_type == ATTR_RGB:
             if len(parameters) >= 5:
                 self.state["rgb"] = {
@@ -158,7 +224,11 @@ class DeviceInfo:
 
         elif attr_type == ATTR_SENSOR_TEMP:
             if len(parameters) >= 2:
-                temp = (parameters[0] | (parameters[1] << 8)) / 100.0
+                # 2-byte signed little-endian, 0.01 C units (doc 3.5.1.10).
+                raw = parameters[0] | (parameters[1] << 8)
+                if raw >= 0x8000:
+                    raw -= 0x10000
+                temp = raw / 100.0
                 if self.device_type == 10:
                     self.state["currentTemp"] = temp
                 elif self.device_type == 11:
@@ -230,7 +300,7 @@ class DeviceInfo:
         # Air conditioner: byte2 bit7=on, bit3-5=mode, bit0-2=fan level
         self.state["climateSwitch"] = (byte2 & 0x80) != 0
         ctrl_mode = (byte2 >> 3) & 0x07
-        mode_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 1}
+        mode_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
         if ctrl_mode in mode_map:
             self.state["climateMode"] = mode_map[ctrl_mode]
         fan_level = byte2 & 0x07

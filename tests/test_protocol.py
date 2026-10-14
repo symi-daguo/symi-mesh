@@ -21,6 +21,7 @@ from symi_mesh.protocol import (  # noqa: E402
     calculate_checksum,
     parse_device_list_frame,
     parse_status_event,
+    parse_status_pairs,
     parse_switch_state,
 )
 
@@ -107,9 +108,118 @@ class TestSwitchState:
         assert states == [False, True, False, False]
 
 
-class TestEvents:
+class TestMultiPairStatus:
+    """NODE_STATUS payloads may carry several (msg_type, param) pairs."""
+
     def setup_method(self) -> None:
         self.handler = ProtocolHandler()
+
+    def test_real_capture_thermostat_frame(self) -> None:
+        # Real gateway capture: 53 80 05 0D 06 01 02 02 16 00 00 1B 10 1C 00 1D 00 C0
+        payload = bytes([0x06, 0x01, 0x02, 0x02, 0x16, 0x00, 0x00, 0x1B, 0x10, 0x1C, 0x00, 0x1D, 0x00])
+        frame = _event_frame(0x80, 0x05, payload)
+        parsed = self.handler.parse_frame(frame)
+        assert parsed is not None
+        pairs = parse_status_pairs(parsed.payload[2:])
+        assert [p[0] for p in pairs] == [0x02, 0x16, 0x1B, 0x1C, 0x1D]
+        assert pairs[0][1] == bytes([0x02])
+        assert pairs[1][1] == bytes([0x00, 0x00])
+        assert pairs[2][1] == bytes([0x10])
+        assert pairs[3][1] == bytes([0x00])
+        assert pairs[4][1] == bytes([0x00])
+
+    def test_device_applies_all_pairs(self) -> None:
+        registry = DeviceRegistry()
+        device, _ = registry.add_or_update(
+            {
+                "macAddress": "CD:D2:57:93:46:84",
+                "networkAddress": 0x0106,
+                "deviceType": 10,
+                "deviceSubType": 1,
+            }
+        )
+        pairs = parse_status_pairs(
+            bytes([0x02, 0x02, 0x16, 0x00, 0x00, 0x1B, 0x10, 0x1C, 0x00, 0x1D, 0x00])
+        )
+        device.update_from_pairs(pairs)
+        assert device.state["switch"] is True       # 空调开
+        assert device.state["currentTemp"] == 0.0   # 室温 0.00 C
+        assert device.state["targetTemp"] == 16     # 设定 16 C
+        assert device.state["fanMode"] == 0
+        assert device.state["climateMode"] == 0
+
+    def test_signed_temperature(self) -> None:
+        registry = DeviceRegistry()
+        device, _ = registry.add_or_update(
+            {
+                "macAddress": "AA:BB:CC:DD:EE:FF",
+                "networkAddress": 0x0300,
+                "deviceType": 11,
+                "deviceSubType": 1,
+            }
+        )
+        # -5.00 C -> -500 = 0xFE0C (signed LE)
+        device.update_from_event(0x16, bytes([0x0C, 0xFE]))
+        assert device.state["temperature"] == -5.0
+
+    def test_scene_panel_event_keys(self) -> None:
+        registry = DeviceRegistry()
+        device, _ = registry.add_or_update(
+            {
+                "macAddress": "AA:BB:CC:DD:EE:FF",
+                "networkAddress": 0x0400,
+                "deviceType": 6,
+                "deviceSubType": 6,
+            }
+        )
+        # Doc: 0x40 0x00 = key 1 triggered; 0x00 0x10 = key 6 triggered.
+        device.update_from_event(0x07, bytes([0x40, 0x00]))
+        assert device.state["sceneTriggers"][0] is True
+        assert not any(device.state["sceneTriggers"][1:])
+        device.update_from_event(0x07, bytes([0x00, 0x10]))
+        assert device.state["sceneTriggers"][5] is True
+        assert device.state["sceneTriggers"][0] is False
+
+    def test_unknown_msg_type_stops_split(self) -> None:
+        pairs = parse_status_pairs(bytes([0x99, 0x01, 0x02]))
+        assert len(pairs) == 1
+        assert pairs[0][0] == 0x99
+        assert pairs[0][1] == bytes([0x01, 0x02])
+
+
+class TestListUpdateEvent:
+    def setup_method(self) -> None:
+        self.handler = ProtocolHandler()
+
+    def test_node_list_update_event_parses(self) -> None:
+        # Doc §4.2: 53 80 10 10 ... — node list update, same payload as 0x92.
+        payload = bytes(
+            [
+                0x0A, 0x09,
+                0xB5, 0x91, 0xB5, 0x7A, 0xFA, 0x28,
+                0x21, 0x01, 0xA8, 0x01,
+                0x0A, 0x00, 0x01, 0x00,
+            ]
+        )
+        frame = _event_frame(0x80, 0x10, payload)
+        parsed = self.handler.parse_frame(frame)
+        assert parsed is not None
+        info = parse_device_list_frame(parsed)
+        assert info is not None
+        assert info["maxDevices"] == 10
+        assert info["index"] == 9
+        assert info["macAddress"] == "b5:91:b5:7a:fa:28"
+        assert info["networkAddress"] == 0x0121
+
+    def test_standard_scene_frame(self) -> None:
+        # Doc §4.3: 53 31 01 02 61
+        frame = self.handler.build_scene_control_frame(2)
+        assert frame == bytes([0x53, 0x31, 0x01, 0x02, 0x61])
+
+    def test_transparent_scene_frame(self) -> None:
+        # Doc §6: 53 34 06 bc c0 00 05 01 02 1B
+        frame = self.handler.build_scene_control_frame_transparent(2)
+        assert frame == bytes([0x53, 0x34, 0x06, 0xBC, 0xC0, 0x00, 0x05, 0x01, 0x02, 0x1B])
 
     def test_parse_status_event(self) -> None:
         # 53 80 06 04 9A 01 02 15 <cksum>: addr=0x019A, attr=0x02, param=0x15

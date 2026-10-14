@@ -11,17 +11,18 @@ import logging
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
+    CONF_QUERY_ON_STARTUP,
     DOMAIN,
+    EVENT_LIST_NODE_UPDATE_RPT,
     KIND_GATEWAY,
     OP_EVENT_NODE_STATUS,
     OP_RESP_DEVICE_LIST,
 )
 from .device import DeviceInfo as MeshDevice, DeviceRegistry
 from .gateway import GatewayTransport
-from .protocol import parse_device_list_frame, parse_status_event
+from .protocol import parse_device_list_frame, parse_status_event, parse_status_pairs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,10 +35,14 @@ PLATFORMS = (
     "sensor",
     "binary_sensor",
     "scene",
+    "lock",
 )
 
 # How long to wait for the full device list after the first 0x92 frame.
 DEVICE_LIST_TIMEOUT_S = 10.0
+# Startup status-query retry (protocol doc §3.1: 200 ms, max 3 attempts).
+QUERY_TIMEOUT_S = 0.2
+QUERY_MAX_ATTEMPTS = 3
 
 
 class SymiMeshCoordinator:
@@ -56,11 +61,43 @@ class SymiMeshCoordinator:
         self._started = False
         self._added_entity_ids: set[str] = set()
         self._promoted_three_in_one: set[str] = set()
+        self._pending_queries: dict[tuple[int, int], int] = {}
+        self._query_waiters: dict[tuple[int, int], asyncio.Future] = {}
+        self._gateway_device_id: str | None = None
+
+    @property
+    def gateway_device_id(self) -> str | None:
+        """Device registry id of the gateway device (for via_device_id)."""
+        return self._gateway_device_id
+
+    def _ensure_gateway_device(self) -> None:
+        """Register the gateway device in the device registry once."""
+        if self._gateway_device_id is not None:
+            return
+        from homeassistant.helpers import device_registry as dr
+
+        dev_reg = dr.async_get(self.hass)
+        identifier = self.gateway_identifier(self.entry)
+        data = {**self.entry.data, **self.entry.options}
+        if data.get("connection_type") == "serial":
+            name = f"Symi Mesh 网关 ({data.get('serial_port')})"
+        else:
+            name = f"Symi Mesh 网关 ({data.get('host')})"
+        device = dev_reg.async_get_or_create(
+            config_entry_id=self.entry.entry_id,
+            identifiers={(DOMAIN, identifier)},
+            name=name,
+            manufacturer="SYMI 亖米",
+            model="Symi Mesh 网关",
+        )
+        self._gateway_device_id = device.id
 
     # -- lifecycle ----------------------------------------------------------
 
     async def async_setup(self) -> None:
         data = {**self.entry.data, **self.entry.options}
+        self._query_on_startup = bool(data.get(CONF_QUERY_ON_STARTUP, True))
+        self._ensure_gateway_device()
         connection_type = data.get("connection_type", "tcp")
         self.transport = GatewayTransport(
             connection_type=connection_type,
@@ -74,7 +111,13 @@ class SymiMeshCoordinator:
         self.transport.set_frame_callback(self._handle_frame)
         self.transport.set_connection_callbacks(self._on_connected, self._on_disconnected)
         self._started = True
-        self._start_task = self.hass.async_create_task(self.transport.async_start())
+        # Background task so a blocked/retrying connection never stalls HA
+        # startup wrap-up (HA >= 2025.4) — fall back to async_create_task.
+        create = getattr(self.hass, "async_create_background_task", None)
+        if create is not None:
+            self._start_task = create(self.transport.async_start(), name="symi_mesh_transport")
+        else:  # pragma: no cover - HA < 2025.4
+            self._start_task = self.hass.async_create_task(self.transport.async_start())
         _LOGGER.info(
             "Symi Mesh coordinator starting (%s)",
             f"{data.get('host')}:{data.get('port')}" if connection_type == "tcp" else data.get("serial_port"),
@@ -82,6 +125,11 @@ class SymiMeshCoordinator:
 
     async def async_shutdown(self) -> None:
         self._started = False
+        for waiter in list(self._query_waiters.values()):
+            if not waiter.done():
+                waiter.cancel()
+        self._query_waiters.clear()
+        self._pending_queries.clear()
         if self.transport is not None:
             await self.transport.async_stop()
         if self._start_task is not None:
@@ -164,10 +212,14 @@ class SymiMeshCoordinator:
         if opcode == OP_RESP_DEVICE_LIST:
             self._handle_device_list_frame(frame)
         elif opcode == OP_EVENT_NODE_STATUS:
-            self._handle_status_event(frame)
+            if frame.status == EVENT_LIST_NODE_UPDATE_RPT:
+                # Node-list update event: same payload as a device-list frame.
+                self._handle_device_list_frame(frame, is_update=True)
+            else:
+                self._handle_status_event(frame)
         # 0xB0 / 0xB2 / 0xB4 are gateway ACK markers — data arrives via 0x80.
 
-    def _handle_device_list_frame(self, frame: Any) -> None:
+    def _handle_device_list_frame(self, frame: Any, is_update: bool = False) -> None:
         parsed = parse_device_list_frame(frame)
         if parsed is None:
             return
@@ -181,6 +233,9 @@ class SymiMeshCoordinator:
                 device.network_address,
             )
             self._add_entities_for_new_device(device)
+        if is_update:
+            # Runtime list-update event: no discovery bookkeeping.
+            return
         # Wait for index == max-1 (or timeout) before the first state query.
         if parsed["index"] >= parsed["maxDevices"] - 1 and not self._device_list_done.is_set():
             if self._device_list_deadline is not None:
@@ -193,12 +248,20 @@ class SymiMeshCoordinator:
             event = parse_status_event(frame)
         except ValueError:
             return
-        device = self.registry.get_by_address(event["networkAddress"])
+        network_address = event["networkAddress"]
+        device = self.registry.get_by_address(network_address)
         if device is None:
             return
+
+        # One event may carry several (msg_type, param) pairs.
+        pairs = parse_status_pairs(frame.payload[2:])
         was_three_in_one = device.is_three_in_one
-        device.update_from_event(event["attrType"], event["parameters"])
+        device.update_from_pairs(pairs)
         self._notify_update(device.mac_address)
+
+        # A response arrived for a pending startup query.
+        self._clear_pending_query(network_address)
+
         # A type-10 panel that answered fresh-air / floor-heating queries is a
         # three-in-one unit: create the extra fan + floor-heating entities.
         if (
@@ -237,22 +300,67 @@ class SymiMeshCoordinator:
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Failed to enable report for %s", device.mac_address)
 
-        # First-run state query: detects three-in-one panels and seeds states.
+        if not self._query_on_startup:
+            return
+
+        # First-run state query with protocol-mandated retry (200 ms, 3 tries).
+        # Also probes fresh-air / floor-heating attrs to classify panels.
+        _LOGGER.info("Starting initial state query for %d devices", len(devices))
         for device in devices:
+            await self._query_device_with_retry(device.network_address)
+            if device.device_type == 10:
+                for msg_type in (0x68, 0x6B):
+                    await self._query_device_with_retry(device.network_address, msg_type)
+        _LOGGER.info("Initial state query finished")
+
+    async def _query_device_with_retry(
+        self, network_address: int, msg_type: int = 0x00
+    ) -> None:
+        """Query one attribute; resend after 200 ms, max 3 attempts (doc §3.1)."""
+        assert self.transport is not None
+        key = (network_address, msg_type)
+        for attempt in range(1, QUERY_MAX_ATTEMPTS + 1):
+            self._pending_queries[key] = attempt
             try:
                 await self.transport.async_send_frame(
-                    self.transport.protocol.build_device_status_query_frame(device.network_address)
+                    self.transport.protocol.build_device_status_query_frame(
+                        network_address, msg_type
+                    )
                 )
-                if device.device_type == 10:
-                    # Probe fresh-air / floor-heating attrs to classify panels.
-                    for msg_type in (0x68, 0x6B):
-                        await self.transport.async_send_frame(
-                            self.transport.protocol.build_device_status_query_frame(
-                                device.network_address, msg_type
-                            )
-                        )
             except Exception:  # noqa: BLE001
-                _LOGGER.debug("Failed to query %s", device.mac_address)
+                self._pending_queries.pop(key, None)
+                return
+            if await self._wait_query_response(key):
+                return
+        self._pending_queries.pop(key, None)
+        _LOGGER.debug(
+            "No status response for 0x%04X msg_type=0x%02X after %d attempts",
+            network_address,
+            msg_type,
+            QUERY_MAX_ATTEMPTS,
+        )
+
+    async def _wait_query_response(self, key: tuple[int, int]) -> bool:
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        self._query_waiters[key] = future
+        try:
+            await asyncio.wait_for(future, timeout=QUERY_TIMEOUT_S)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._query_waiters.pop(key, None)
+
+    def _clear_pending_query(self, network_address: int) -> None:
+        """Resolve waiters for every pending attribute of this device."""
+        for key in list(self._pending_queries):
+            if key[0] != network_address:
+                continue
+            self._pending_queries.pop(key, None)
+            waiter = self._query_waiters.pop(key, None)
+            if waiter is not None and not waiter.done():
+                waiter.set_result(True)
 
     # -- dynamic entities ------------------------------------------------------
 
@@ -317,21 +425,6 @@ class SymiMeshCoordinator:
         return len(self.registry.all_devices())
 
     # -- device info -----------------------------------------------------------
-
-    def gateway_device_info(self) -> DeviceInfo:
-        data = {**self.entry.data, **self.entry.options}
-        if data.get("connection_type") == "serial":
-            identifier = f"serial:{data.get('serial_port')}"
-            name = f"Symi Mesh 网关 ({data.get('serial_port')})"
-        else:
-            identifier = f"tcp:{data.get('host')}:{data.get('port')}"
-            name = f"Symi Mesh 网关 ({data.get('host')})"
-        return DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
-            name=name,
-            manufacturer="SYMI 亖米",
-            model="Symi Mesh 网关",
-        )
 
     @staticmethod
     def gateway_identifier(entry: Any) -> str:

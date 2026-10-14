@@ -25,6 +25,7 @@ from homeassistant.components.light import (
     ColorMode,
     LightEntity,
 )
+from homeassistant.components.lock import LockEntity
 from homeassistant.components.scene import Scene
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.switch import SwitchEntity
@@ -85,13 +86,20 @@ class SymiMeshEntity(Entity):
         model = DEVICE_TYPE_MODELS.get(device.device_type, "Symi Mesh 设备")
         if device.channels > 1:
             model = f"{model} ({device.channels}路)"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.mac_clean)},
-            name=device.name,
-            model=model,
-            manufacturer="SYMI 亖米",
-            via_device=(DOMAIN, coordinator.gateway_identifier(coordinator.entry)),
-        )
+        device_info_kwargs: dict[str, Any] = {
+            "identifiers": {(DOMAIN, device.mac_clean)},
+            "name": device.name,
+            "model": model,
+            "manufacturer": "SYMI 亖米",
+        }
+        if coordinator.gateway_device_id is not None:
+            device_info_kwargs["via_device_id"] = coordinator.gateway_device_id
+        else:  # pragma: no cover - HA < 2024.10 fallback
+            device_info_kwargs["via_device"] = (
+                DOMAIN,
+                coordinator.gateway_identifier(coordinator.entry),
+            )
+        self._attr_device_info = DeviceInfo(**device_info_kwargs)
 
     @property
     def available(self) -> bool:
@@ -294,6 +302,7 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
                 HVACMode.HEAT,
                 HVACMode.FAN_ONLY,
                 HVACMode.DRY,
+                HVACMode.AUTO,
             ]
             self._attr_fan_modes = ["low", "medium", "high", "auto"]
         else:
@@ -329,6 +338,20 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
         if self._variant != "aircon":
             return None
         return FAN_MODE_MAP.get(self._device.state.get("fanMode"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attrs: dict[str, Any] = {}
+        state = self._device.state
+        if "keyLock" in state:
+            attrs["key_lock"] = state["keyLock"]
+        if "valve" in state:
+            attrs["valve"] = state["valve"]
+        if "sleep" in state:
+            attrs["sleep_mode"] = state["sleep"]
+        if "softwareVersion" in state:
+            attrs["firmware_version"] = state["softwareVersion"]
+        return attrs or None
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs["temperature"])
@@ -445,6 +468,13 @@ class SymiTemperatureSensor(SymiMeshEntity, SensorEntity):
     def native_value(self) -> float | None:
         return self._device.state.get("temperature")
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        battery = self._device.state.get("battery")
+        if battery is None:
+            return None
+        return {"battery_level": battery}
+
 
 class SymiHumiditySensor(SymiMeshEntity, SensorEntity):
     _attr_device_class = "humidity"
@@ -457,6 +487,13 @@ class SymiHumiditySensor(SymiMeshEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return self._device.state.get("humidity")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        battery = self._device.state.get("battery")
+        if battery is None:
+            return None
+        return {"battery_level": battery}
 
 
 class SymiDoorSensor(SymiMeshEntity, BinarySensorEntity):
@@ -479,6 +516,65 @@ class SymiMotionSensor(SymiMeshEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return self._device.state.get("motion")
+
+
+class SymiWaterSensor(SymiMeshEntity, BinarySensorEntity):
+    _attr_device_class = "moisture"
+
+    def __init__(self, device: MeshDevice, coordinator: Any) -> None:
+        super().__init__(device, coordinator, "water_alarm", "水浸报警")
+
+    @property
+    def is_on(self) -> bool | None:
+        return self._device.state.get("waterAlarm")
+
+
+class SymiSmokeSensor(SymiMeshEntity, BinarySensorEntity):
+    _attr_device_class = "smoke"
+
+    def __init__(self, device: MeshDevice, coordinator: Any) -> None:
+        super().__init__(device, coordinator, "smoke_alarm", "烟雾报警")
+
+    @property
+    def is_on(self) -> bool | None:
+        return self._device.state.get("smokeAlarm")
+
+
+# ---------------------------------------------------------------------------
+# Lock (type 14)
+# ---------------------------------------------------------------------------
+
+
+class SymiLock(SymiMeshEntity, LockEntity):
+    def __init__(self, device: MeshDevice, coordinator: Any) -> None:
+        super().__init__(device, coordinator, "lock", None)
+
+    @property
+    def is_locked(self) -> bool | None:
+        # The mesh protocol exposes on/off only; map to locked/unlocked.
+        return self._device.state.get("switch")
+
+    async def async_lock(self, **kwargs: Any) -> None:
+        await self._coordinator.async_send_control(self._device, 0x02, bytes([0x02]))
+
+    async def async_unlock(self, **kwargs: Any) -> None:
+        await self._coordinator.async_send_control(self._device, 0x02, bytes([0x01]))
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic sensors (voice controller / TV box — no standard control domain)
+# ---------------------------------------------------------------------------
+
+
+class SymiDiagnosticSensor(SymiMeshEntity, SensorEntity):
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, device: MeshDevice, coordinator: Any, key: str, name: str) -> None:
+        super().__init__(device, coordinator, key, name)
+
+    @property
+    def native_value(self) -> str | None:
+        return self._device.state.get("softwareVersion") or "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -519,11 +615,27 @@ def build_entities_for_platform(platform: str, device: MeshDevice, coordinator: 
             entities.append(SymiMotionSensor(device, coordinator))
         elif device_type == 9:
             entities.append(SymiCardSensor(device, coordinator))
+        elif device_type == 15:
+            entities.append(SymiWaterSensor(device, coordinator))
+        elif device_type == 16:
+            entities.append(SymiSmokeSensor(device, coordinator))
+
+    elif platform == "lock":
+        if device_type == 14:
+            entities.append(SymiLock(device, coordinator))
 
     elif platform == "sensor":
         if device_type == 11:
             entities.append(SymiTemperatureSensor(device, coordinator))
             entities.append(SymiHumiditySensor(device, coordinator))
+        elif device_type == 13:
+            entities.append(
+                SymiDiagnosticSensor(device, coordinator, "voice_status", "语控状态")
+            )
+        elif device_type == 17:
+            entities.append(
+                SymiDiagnosticSensor(device, coordinator, "tvbox_status", "机顶盒状态")
+            )
 
     elif platform == "light":
         if device_type in (4, 0x18):

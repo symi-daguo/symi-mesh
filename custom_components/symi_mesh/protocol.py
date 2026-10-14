@@ -18,12 +18,17 @@ import logging
 from typing import Final
 
 from .const import (
+    EVENT_LIST_NODE_UPDATE_RPT,
     MAX_FRAME_LENGTH,
     MIN_FRAME_LENGTH,
+    MSG_TYPE_PARAM_LEN,
     OP_EVENT_NODE_STATUS,
     OP_EVENT_TRANSPARENT_MSG,
     OP_RESP_DEVICE_LIST,
+    OP_SCENE_CONTROL,
+    OP_SCENE_CONTROL_TRANSPARENT,
     PROTOCOL_HEADER,
+    SCENE_BROADCAST_ADDR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,20 +216,23 @@ class ProtocolHandler:
         return self.build_frame(0x30, payload)
 
     def build_scene_control_frame(self, scene_id: int) -> bytes:
-        from .const import SCENE_BROADCAST_ADDR
+        """Standard scene control (0x31, group broadcast)."""
+        return self.build_frame(OP_SCENE_CONTROL, bytes([scene_id & 0xFF]))
 
+    def build_scene_control_frame_transparent(self, scene_id: int) -> bytes:
+        """Scene execution for transparent slave nodes (0x34, broadcast + 5 retries)."""
         addr = SCENE_BROADCAST_ADDR
         payload = bytes(
             [
                 addr & 0xFF,
                 (addr >> 8) & 0xFF,
                 0x00,  # ACK: none
-                0x05,  # retransmit 5 times
+                0x05,  # retransmit 5 times (1.2 s)
                 0x01,  # scene execute
                 scene_id & 0xFF,
             ]
         )
-        return self.build_frame(0x34, payload)
+        return self.build_frame(OP_SCENE_CONTROL_TRANSPARENT, payload)
 
     # -- frame parsing ------------------------------------------------------
 
@@ -307,7 +315,7 @@ class ProtocolHandler:
 
 
 def parse_status_event(frame: ProtocolFrame) -> dict:
-    """Parse a 0x80 node-status event.
+    """Parse a 0x80 node-status event (first msg_type/param pair).
 
     Payload: ``[addr_lo] [addr_hi] [attr_type] [params...]`` (little-endian).
     """
@@ -327,6 +335,30 @@ def parse_status_event(frame: ProtocolFrame) -> dict:
     }
 
 
+def parse_status_pairs(payload: bytes) -> list[tuple[int, bytes]]:
+    """Split a NODE_STATUS payload into ``(msg_type, param)`` pairs.
+
+    A single event may report several attributes back to back (protocol doc
+    §4.4 NODE_STATUS example). Unknown/variable-length msg_types stop the
+    split — the remaining bytes are returned as one trailing pair only when
+    the msg_type is known but truncated.
+    """
+    pairs: list[tuple[int, bytes]] = []
+    index = 0
+    while index < len(payload):
+        msg_type = payload[index]
+        param_len = MSG_TYPE_PARAM_LEN.get(msg_type)
+        if param_len is None:
+            # Unknown attribute: keep the remainder as its params so callers
+            # can still inspect it, then stop.
+            pairs.append((msg_type, payload[index + 1 :]))
+            break
+        params = payload[index + 1 : index + 1 + param_len]
+        pairs.append((msg_type, params))
+        index += 1 + param_len
+    return pairs
+
+
 def parse_transparent_event(frame: ProtocolFrame) -> dict:
     """Parse a 0xC0 transparent event (big-endian address)."""
     if not frame.is_transparent_event():
@@ -340,12 +372,14 @@ def parse_transparent_event(frame: ProtocolFrame) -> dict:
 
 
 def parse_device_list_frame(frame: ProtocolFrame) -> dict | None:
-    """Parse a 0x92 device-list response frame.
+    """Parse a device-list frame (0x92 response or 0x80/0x10 update event).
 
     Payload: ``[max_devices] [index] [mac:6] [net_addr:2 LE] [vendor:2 LE]
     [device_type] [sub_type] [status]`` (status bit0 = online).
     """
-    if frame.opcode != OP_RESP_DEVICE_LIST:
+    is_list_response = frame.opcode == OP_RESP_DEVICE_LIST
+    is_list_update = frame.opcode == OP_EVENT_NODE_STATUS and frame.status == EVENT_LIST_NODE_UPDATE_RPT
+    if not (is_list_response or is_list_update):
         return None
     payload = frame.payload
     if len(payload) < 16:

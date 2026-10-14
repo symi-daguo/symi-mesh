@@ -29,9 +29,21 @@
 | 连接方式 | 参数 | 说明 |
 |---------|------|------|
 | TCP | IP + 端口（默认 4196） | 保存前会实际连通并读取设备列表验证 |
-| 串口 | 设备路径 + 波特率（默认 115200） | HA OS 需先将串口映射进容器（如 `core-serial` / `Ser2net` 插件或 `devices:` 配置） |
+| 串口 | 设备路径 + 波特率（默认 115200） | 见下方「串口接入」 |
 
 连接后自动完成：读取设备列表 → 为每台设备创建实体 → 开启状态上报（0x10）→ 首次全量状态查询（识别三合一面板）。
+
+### 串口接入
+
+- **Linux Docker / HA OS**：串口设备直接透传进 homeassistant 容器（HA OS 的 privileged 核心容器已自动透传 `/dev/ttyUSB0`）。推荐用稳定 by-id 路径（如 `/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0`）避免设备号漂移；权限默认 `root:audio` 即可读。
+- **macOS Docker Desktop**：Docker Desktop 不支持 USB 直通（Linux 容器跑在 VM 内，看不到 macOS 的 `/dev/cu.*`）。官方方案是 USB/IP 桥（`socat`）：
+
+  ```bash
+  brew install socat
+  socat TCP-LISTEN:4196,fork,reuseaddr OPEN:/dev/cu.wchusbserial8330,rawer,ispeed=115200,ospeed=115200
+  ```
+
+  然后在集成里用 **TCP 方式** 连 `host.docker.internal:4196`。桥转发的是真实串口字节流（非模拟设备）。
 
 ## 支持的设备
 
@@ -46,10 +58,13 @@
 | 温控器 | `climate` | 温度/模式/风速 |
 | 温湿度传感器 | `sensor` × 2 | 温度 + 湿度 |
 | 门磁 / 人体感应 | `binary_sensor` | |
+| 智能门锁 | `lock` | |
+| 水浸 / 烟雾报警 | `binary_sensor` | moisture / smoke |
+| 离线语控 / 电视盒子 | `sensor`（诊断） | 固件版本等 |
 | 情景面板/开关 | `scene` | |
 | 三合一面板 | `climate` + `fan` + `climate` | 空调 + 新风 + 地暖，运行时自动识别 |
 
-所有设备通过 `via_device` 挂到网关设备下；网关断线时全部实体自动变 `不可用`，恢复后自动重连（指数退避，最长 60s）。
+所有设备通过 `via_device_id` 挂到网关设备下；网关断线时全部实体自动变 `不可用`，恢复后自动重连（指数退避，最长 60s）。
 
 ## KNX 双向同步
 

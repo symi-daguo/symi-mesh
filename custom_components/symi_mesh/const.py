@@ -50,10 +50,16 @@ MAX_FRAME_LENGTH: Final = 1024
 OP_READ_SOFTWARE_VERSION: Final = 0x02
 OP_READ_DEVICE_LIST: Final = 0x12
 OP_DEVICE_CONTROL: Final = 0x30
-OP_SCENE_CONTROL: Final = 0x34
 OP_TRANSPARENT_CONTROL: Final = 0x40
 OP_DEVICE_STATUS_QUERY: Final = 0x32
 OP_ENABLE_STATUS_REPORT: Final = 0x10
+OP_SCENE_CONTROL: Final = 0x31          # 标准场景控制（群控）
+OP_SCENE_CONTROL_TRANSPARENT: Final = 0x34  # 透传节点场景执行（广播+重传5次）
+OP_READ_NODE_COUNT: Final = 0x15
+
+# 0x80 event status codes that are not node-status data.
+EVENT_NODE_ACK: Final = 0x05
+EVENT_LIST_NODE_UPDATE_RPT: Final = 0x10
 
 OP_EVENT_NODE_STATUS: Final = 0x80
 OP_EVENT_TRANSPARENT_MSG: Final = 0xC0
@@ -91,6 +97,69 @@ ATTR_FLOOR_HEATING_TEMP: Final = 0x6C
 ATTR_THREE_IN_ONE: Final = 0x94
 
 # ---------------------------------------------------------------------------
+# msg_type -> param length (protocol doc 3.5.1 / 3.5.3). A 0x80 NODE_STATUS
+# payload may carry several (msg_type, param) pairs back to back; this table
+# splits them. None = variable/unknown length -> stop parsing there.
+# ---------------------------------------------------------------------------
+MSG_TYPE_PARAM_LEN: Final[dict[int, int | None]] = {
+    0x02: 1,   # ON_OFF (2 bits per channel)
+    0x03: 1,   # LIGHT_LIGHTNESS
+    0x04: 1,   # LIGHT_TEMPERATURE
+    0x05: 1,   # CURT_RUN_STATUS
+    0x06: 1,   # CURT_RUN_PER_POS
+    0x07: 2,   # SCENE_PANEL_EVENT
+    0x08: 1,   # CURT_CFG_RUN_DIR
+    0x0A: 1,   # DOOR_SENSOR_STATUS
+    0x0B: 1,   # BATTERY_LEVEL_STATUS
+    0x0C: 1,   # HB_DET_STATUS
+    0x0D: 1,   # CTRL_SOURCE
+    0x0E: 1,   # CARD_DET_STATUS
+    0x0F: 3,   # SOFT_VERSION
+    0x10: 1,   # STATUS_CHG_RPT_EN_CFG
+    0x11: 1,   # PAIR_FUNC_LOCK_CFG
+    0x12: 4,   # KEYS_1_4_CFG
+    0x13: 2,   # TEMP_SLEEP_MODE
+    0x16: 2,   # SENSOR_TEMP (signed, *100)
+    0x17: 1,   # SENSOR_HUMI
+    0x19: 2,   # KEYS_5_6_CFG
+    0x1A: 2,   # PWR_ONOFF_SCENE_CFG
+    0x1B: 1,   # TMPC_TEMP
+    0x1C: 1,   # TMPC_WIND_SPEED
+    0x1D: 1,   # TMPC_MODE
+    0x1E: 1,   # TMPC_KB_LOCK
+    0x1F: 1,   # TMPC_VALVE
+    0x21: 1,   # TMPC_SLEEP
+    0x22: 4,   # NAMEID_1_4_CFG
+    0x23: 2,   # NAMEID_5_6_CFG
+    0x24: 1,   # PWR_ON_AUTO_ONOFF_CFG
+    0x25: 1,   # KEYS_ON_MUTEX_CFG
+    0x26: 1,   # DEV_LOCK_CFG
+    0x27: 3,   # KEY_LOOP_SCENE_CFG
+    0x28: 10,  # CURT_SW_RCU_CFG
+    0x29: 8,   # DEV_RCU_CFG
+    0x2A: 1,   # SENSOR_WATER_ALARM
+    0x2B: 1,   # SENSOR_SMOKE_ALARM
+    0x2C: 1,   # LOW_BATTERY_LEVEL_ALARM
+    0x2D: 1,   # TAMPER_ALARM
+    0x2E: 4,   # SCENE_DELAY_ACT_CFG
+    0x2F: 1,   # LIGHT_LIGHTNESS_INC
+    0x30: 1,   # LIGHT_LIGHTNESS_DEC
+    0x31: 1,   # LIGHT_TEMPERATURE_INC
+    0x32: 1,   # LIGHT_TEMPERATURE_DEC
+    0x33: 1,   # TMPC_TEMP_INC
+    0x34: 1,   # TMPC_TEMP_DEC
+    0x35: 1,   # TMPC_WIND_SPEED_INC
+    0x36: 1,   # TMPC_WIND_SPEED_DEC
+    0x68: 1,   # FRESH_AIR_SWITCH
+    0x69: 1,   # FRESH_AIR_MODE
+    0x6A: 1,   # FRESH_AIR_SPEED
+    0x6B: 1,   # FLOOR_HEATING_SWITCH
+    0x6C: 1,   # FLOOR_HEATING_TEMP
+    0x8F: 2,   # IR_ACTION
+    0x94: 8,   # 三合一组合状态
+}
+
+# ---------------------------------------------------------------------------
 # Device types (from docs/ENTITY_REFERENCE_TABLE.md)
 # ---------------------------------------------------------------------------
 DEVICE_TYPE_UNKNOWN: Final = 0
@@ -125,6 +194,12 @@ DEVICE_TYPE_NAMES: Final[dict[int, str]] = {
     10: "温控器",
     11: "温湿度传感器",
     12: "情景开关",
+    13: "离线语控节点",
+    14: "智能门锁",
+    15: "水浸传感器",
+    16: "烟雾报警器",
+    17: "智能电视盒子",
+    18: "单火情景开关",
     0x14: "透传丛机",
     0x18: "五色调光灯",
     0x27: "四输入八输出",
@@ -144,6 +219,12 @@ DEVICE_TYPE_MODELS: Final[dict[int, str]] = {
     10: "Symi 温控器",
     11: "Symi 温湿度传感器",
     12: "Symi 情景开关",
+    13: "Symi 离线语控节点",
+    14: "Symi 智能门锁",
+    15: "Symi 水浸传感器",
+    16: "Symi 烟雾报警器",
+    17: "Symi 智能电视盒子",
+    18: "Symi 单火情景开关",
     0x14: "Symi 透传丛机",
     0x18: "Symi 五色调光灯",
     0x27: "Symi 四输入八输出",
@@ -169,6 +250,12 @@ DEVICE_TYPE_TO_PLATFORM: Final[dict[int, str]] = {
     10: "climate",
     11: "sensor",
     12: "scene",
+    13: "sensor",     # 离线语控节点：diagnostic sensor
+    14: "lock",       # 智能门锁
+    15: "binary_sensor",  # 水浸
+    16: "binary_sensor",  # 烟雾
+    17: "sensor",     # 电视盒子：diagnostic sensor
+    18: "switch",     # 单火情景开关（带负载路）
     0x14: "scene",
     0x18: "light",
     0x27: "switch",
@@ -181,8 +268,14 @@ SCENE_TRIGGER_TYPES: Final[frozenset[int]] = frozenset({6, 12, 0x14})
 # ---------------------------------------------------------------------------
 # Value maps
 # ---------------------------------------------------------------------------
-# Climate mode: mesh -> HA
-CLIMATE_MODE_MAP: Final[dict[int, str]] = {1: "cool", 2: "heat", 3: "fan_only", 4: "dry"}
+# Climate mode: mesh -> HA (0x1D: 1=cool 2=heat 3=fan 4=dry; 5=auto from 0x94 struct)
+CLIMATE_MODE_MAP: Final[dict[int, str]] = {
+    1: "cool",
+    2: "heat",
+    3: "fan_only",
+    4: "dry",
+    5: "auto",
+}
 CLIMATE_MODE_REVERSE: Final[dict[str, int]] = {v: k for k, v in CLIMATE_MODE_MAP.items()}
 
 # Fan mode: mesh -> HA (1=high, 2=medium, 3=low, 4=auto)

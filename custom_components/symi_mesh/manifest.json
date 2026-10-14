@@ -10,7 +10,7 @@
   "issue_tracker": "https://github.com/symi-daguo/symi-mesh-ha/issues",
   "loggers": ["custom_components.symi_mesh"],
   "quality_scale": "bronze",
-  "requirements": ["pyserial-asyncio>=0.6,<1.0"],
+  "requirements": ["serialx>=1.0"],
   "version": "1.0.0",
   "homeassistant": "2024.1.0",
   "after_dependencies": []

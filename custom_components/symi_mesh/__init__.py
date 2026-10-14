@@ -42,6 +42,7 @@ PLATFORMS = [
     "sensor",
     "binary_sensor",
     "scene",
+    "lock",
 ]
 
 

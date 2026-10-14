@@ -127,13 +127,16 @@ class GatewayTransport:
         _LOGGER.info("Connected to Symi gateway at %s:%s", self.host, self.port)
 
     async def _async_connect_serial(self) -> None:
-        import serial_asyncio
+        # serialx is the modern replacement for pyserial-asyncio (HA 2026+);
+        # fall back to the legacy import for older HA versions.
+        try:
+            from serialx.async_serial import open_serial_connection
+        except ImportError:  # pragma: no cover - HA < 2025
+            from serial_asyncio import open_serial_connection
 
         _LOGGER.debug("Opening serial port %s @ %d", self.serial_port, self.baud_rate)
         self._reader, self._writer = await asyncio.wait_for(
-            serial_asyncio.open_serial_connection(
-                url=self.serial_port, baudrate=self.baud_rate
-            ),
+            open_serial_connection(url=self.serial_port, baudrate=self.baud_rate),
             timeout=DEFAULT_CONNECT_TIMEOUT,
         )
         self.connected = True
