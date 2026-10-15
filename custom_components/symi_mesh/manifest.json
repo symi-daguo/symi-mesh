@@ -5,7 +5,6 @@
     "@symi-daguo"
   ],
   "config_flow": true,
-  "dependencies": [],
   "documentation": "https://github.com/symi-daguo/symi-mesh",
   "integration_type": "hub",
   "iot_class": "local_push",
@@ -17,7 +16,5 @@
   "requirements": [
     "serialx>=1.0"
   ],
-  "version": "1.2.5",
-  "homeassistant": "2024.3.0",
-  "after_dependencies": []
+  "version": "1.2.5"
 }
