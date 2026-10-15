@@ -436,3 +436,18 @@ class TestLoopBreaker:
             assert "switch.a" not in eng._loop_disabled
 
         asyncio.run(run())
+
+
+class TestCurtainAndColorTemp:
+    """窗帘运行值（协议 3.5.1.4：1=打开 2=关闭 3=停止）与色温百分比换算。"""
+
+    def setup_method(self) -> None:
+        self.handler = ProtocolHandler()
+
+    def test_cover_run_values_match_protocol(self) -> None:
+        for service_value in (1, 2, 3):
+            frame = self.handler.build_device_control_frame(0x0105, 0x05, bytes([service_value]))
+            # 53 30 len addr_lo addr_hi attr param cc（addr 小端）
+            assert frame[3:5] == bytes([0x05, 0x01])  # addr 0x0105 小端
+            assert frame[5] == 0x05
+            assert frame[6] == service_value

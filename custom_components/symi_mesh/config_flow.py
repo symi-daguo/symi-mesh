@@ -484,7 +484,7 @@ class SymiSyncOptionsFlow(OptionsFlow):
             current = dict(user_input)
 
         return self.async_show_form(
-            step_id="init",
+            step_id="sync_init",
             data_schema=_sync_schema(self.hass, current),
             errors=errors,
             description_placeholders={"path_tip": path_tip},

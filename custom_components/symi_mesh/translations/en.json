@@ -67,6 +67,18 @@
           "enable_status_report": "Enable device status reporting",
           "query_on_startup": "Query states once on startup"
         }
+      },
+      "sync_init": {
+        "title": "Sync group options",
+        "description": "Edit entities, direction and global timings. Changes apply automatically after save.",
+        "data": {
+          "name": "Name",
+          "entities": "Entities",
+          "direction": "Direction",
+          "enabled": "Enabled",
+          "debounce_ms": "Debounce (global)",
+          "outbound_ms": "Outbound interval (global)"
+        }
       }
     }
   },

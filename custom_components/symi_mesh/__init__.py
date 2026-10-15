@@ -133,7 +133,18 @@ async def _async_unload_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry)
+    """Reload on config/options change.
+
+    HA already reloads the entry itself after an options flow completes; our
+    listener can then race with that reload and hit UnknownEntry. Guard it so
+    a benign race never leaves the engine running with a stale entity list.
+    """
+    from homeassistant.config_entries import UnknownEntry
+
+    try:
+        await hass.config_entries.async_reload(entry.entry_id)
+    except UnknownEntry:
+        _LOGGER.debug("跳过重载（条目正在被 HA 重载/卸载）: %s", entry.entry_id)
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
@@ -171,6 +182,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 }
             )
         _LOGGER.info("symi_mesh 状态: %s", snaps)
+        hass.bus.async_fire(f"{DOMAIN}_describe", {"entries": snaps})
 
     hass.services.async_register(DOMAIN, SERVICE_RELOAD, _reload_all)
     hass.services.async_register(DOMAIN, SERVICE_SCAN_DEVICES, _scan_devices)

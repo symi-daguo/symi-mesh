@@ -33,20 +33,18 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 
 from .const import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP,
-    ATTR_CURTAIN_RUN_STATUS,
     ATTR_RGB,
     ATTR_SWITCH,
     CLIMATE_MODE_MAP,
     CLIMATE_MODE_REVERSE,
     DEVICE_TYPE_MODELS,
-    DEVICE_TYPE_NAMES,
     DOMAIN,
     FAN_MODE_MAP,
     FAN_MODE_REVERSE,
@@ -204,13 +202,23 @@ class SymiLight(SymiMeshEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         state = self._device.state
         state["switch"] = True
-        if "brightness" in kwargs and kwargs["brightness"] is not None:
+        brightness = kwargs.get("brightness")
+        if brightness is not None:
             await self._coordinator.async_send_control(
-                self._device, ATTR_BRIGHTNESS, bytes([round(kwargs["brightness"] / 2.55)])
+                self._device, ATTR_BRIGHTNESS, bytes([round(brightness / 2.55)])
             )
-        if "color_temp" in kwargs and kwargs["color_temp"] is not None:
+        else:
+            # Turn on at the lamp's last level (ON_OFF 0x02 = 0x02).
             await self._coordinator.async_send_control(
-                self._device, ATTR_COLOR_TEMP, bytes([_mireds_to_mesh(kwargs["color_temp"])])
+                self._device, ATTR_SWITCH, bytes([0x02])
+            )
+        mireds = kwargs.get("color_temp")
+        if mireds is None and kwargs.get("color_temp_kelvin") is not None:
+            # HA >= 2024.2 passes color_temp_kelvin.
+            mireds = 1000000 // int(kwargs["color_temp_kelvin"])
+        if mireds is not None:
+            await self._coordinator.async_send_control(
+                self._device, ATTR_COLOR_TEMP, bytes([_mireds_to_mesh(int(mireds))])
             )
         if "rgb_color" in kwargs and kwargs["rgb_color"] is not None:
             r, g, b = kwargs["rgb_color"]
@@ -259,6 +267,7 @@ class SymiCover(SymiMeshEntity, CoverEntity):
         return position == 0
 
     async def async_open_cover(self, **kwargs: Any) -> None:
+        # 协议 CURT_RUN_STATUS: 1=打开 2=关闭 3=停止
         await self._coordinator.async_send_control(self._device, 0x05, bytes([1]))
 
     async def async_close_cover(self, **kwargs: Any) -> None:

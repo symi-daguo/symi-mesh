@@ -35,7 +35,6 @@ from .const import (
     DEVICE_TYPE_TO_PLATFORM,
     MULTI_CHANNEL_TYPES,
 )
-from .protocol import parse_switch_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -115,25 +114,16 @@ class DeviceInfo:
                 self.handle_switch_state(parameters, attr_type)
 
         elif attr_type == ATTR_CURTAIN_RUN_STATUS:
+            # 串口协议唯一定义（3.5.1.4）：1=打开 2=关闭 3=停止，其余值保留
             if parameters:
                 status = parameters[0]
                 self.state["curtainStatus"] = status
-                if status == 0:
-                    self.state["curtainProtocol"] = "mijia"
+                if status == 1:
                     self.state["curtainAction"] = "opening"
-                elif status == 3:
-                    self.state["curtainProtocol"] = "miniprogram"
-                    self.state["curtainAction"] = "stopped"
-                elif status == 1:
-                    if self.state.get("curtainProtocol") == "mijia":
-                        self.state["curtainAction"] = "closing"
-                    else:
-                        self.state["curtainAction"] = "opening"
                 elif status == 2:
-                    if self.state.get("curtainProtocol") == "mijia":
-                        self.state["curtainAction"] = "stopped"
-                    else:
-                        self.state["curtainAction"] = "closing"
+                    self.state["curtainAction"] = "closing"
+                elif status == 3:
+                    self.state["curtainAction"] = "stopped"
 
         elif attr_type == ATTR_CURTAIN_POSITION:
             if parameters:
