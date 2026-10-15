@@ -120,6 +120,9 @@ class DeviceInfo:
             if parameters:
                 status = parameters[0]
                 self.state["curtainStatus"] = status
+                # 主控命令窗口（8s）内的一切上报都是命令回显，主控目标即最终状态，忽略
+                if time.time() < self.state.get("curtainCmdUntil", 0):
+                    return
                 if status == 0:
                     self.state["curtainProtocol"] = "mijia"
                     self.state["curtainAction"] = "opening"
@@ -133,23 +136,29 @@ class DeviceInfo:
                     else:
                         self.state["curtainAction"] = "opening"
                         self.state["curtainOpened"] = True
-                        self.state["curtainPosition"] = 100
+                        if "curtainPosition" not in self.state:
+                            self.state["curtainPosition"] = 100
                 elif status == 2:
                     # 2=到位（稳态，不区分开/关方向——方向由最后动作命令记忆）
                     if self.state.get("curtainProtocol") == "mijia":
                         self.state["curtainAction"] = "stopped"
                     else:
                         self.state["curtainAction"] = "stopped"
-                        self.state["curtainPosition"] = (
-                            100 if self.state.get("curtainOpened") else 0
-                        )
+                        if "curtainPosition" not in self.state:
+                            self.state["curtainPosition"] = (
+                                100 if self.state.get("curtainOpened") else 0
+                            )
 
         elif attr_type == ATTR_CURTAIN_POSITION:
-            # 主控权威：模组回传的电机实际位置码（机械误差/撞墙，如 94%）不采纳，
-            # 位置只由主控动作决定（open=100 / close=0 / set_position=目标值）。
-            # 该模组多数不接真电机、不回位置，位置显示以主控目标为准。
-            if parameters and "curtainPosition" not in self.state:
-                self.state["curtainPosition"] = parameters[0]
+            # 位置上报：主控命令窗口（8s）内=命令回显，忽略（防覆盖主控目标）；
+            # 窗口外=mesh 面板滑动等外部操作，采纳位置（含运行方向）。
+            if parameters:
+                if time.time() < self.state.get("curtainCmdUntil", 0):
+                    return
+                pos = parameters[0]
+                self.state["curtainPosition"] = pos
+                if pos > 0:
+                    self.state["curtainOpened"] = True
 
         elif attr_type == ATTR_DOOR:
             if parameters:

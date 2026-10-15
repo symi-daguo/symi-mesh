@@ -8,6 +8,7 @@ entities that represent it. Unique IDs are always derived from the device MAC
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -273,16 +274,18 @@ class SymiCover(SymiMeshEntity, CoverEntity):
         return {True: False, False: True}.get(opened)
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        # 协议 CURT_RUN_STATUS: 1=打开 2=关闭 3=停止；方向记忆用于稳态推导
+        # 协议 CURT_RUN_STATUS: 1=打开 2=关闭 3=停止；主控权威：目标即最终状态
         self._device.state["curtainOpened"] = True
         self._device.state["curtainPosition"] = 100
-        self._device.state["curtainAction"] = "opening"
+        self._device.state["curtainAction"] = "stopped"
+        self._device.state["curtainCmdUntil"] = time.time() + 8
         await self._coordinator.async_send_control(self._device, 0x05, bytes([1]))
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         self._device.state["curtainOpened"] = False
         self._device.state["curtainPosition"] = 0
-        self._device.state["curtainAction"] = "closing"
+        self._device.state["curtainAction"] = "stopped"
+        self._device.state["curtainCmdUntil"] = time.time() + 8
         await self._coordinator.async_send_control(self._device, 0x05, bytes([2]))
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
@@ -294,6 +297,7 @@ class SymiCover(SymiMeshEntity, CoverEntity):
         self._device.state["curtainOpened"] = position > 0
         self._device.state["curtainPosition"] = position
         self._device.state["curtainAction"] = "stopped"
+        self._device.state["curtainCmdUntil"] = time.time() + 8
         await self._coordinator.async_send_control(self._device, 0x06, bytes([position]))
 
 
