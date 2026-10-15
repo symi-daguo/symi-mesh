@@ -42,18 +42,22 @@
       },
       "knx_sync": {
         "title": "添加双向同步组",
-        "description": "选择至少两个实体建立同步关系（例如 KNX 开关 ↔ Mesh 开关），同一组内实体状态保持一致。\n{path_tip}",
+        "description": "从「Mesh 实体」「KNX 实体」列表中直接点选设备（列表已按平台过滤），也可在「其他实体」中同步任意同类型 HA 实体。同一组内实体状态保持一致。\n{path_tip}",
         "data": {
-          "name": "名称",
-          "entities": "同步实体",
+          "name": "名称（可留空）",
+          "mesh_entities": "Mesh 实体",
+          "knx_entities": "KNX 实体",
+          "other_entities": "其他实体",
           "direction": "同步方向",
           "enabled": "启用同步",
           "debounce_ms": "防抖时间（全局）",
           "outbound_ms": "出队间隔（全局）"
         },
         "data_description": {
-          "name": "便于识别的中文名称，例如「客厅主灯 ↔ KNX 主灯」。",
-          "entities": "同一组内实体状态保持一致。支持 HA 全部可同步实体（含 KNX 与 Mesh）；在搜索框输入关键字即可快速筛选——「继电器」定位 KNX 实体、「零火/调光/窗帘」定位 Mesh 实体。",
+          "name": "留空则提交时自动按所选实体生成「A ↔ B」。",
+          "mesh_entities": "本集成接入的全部 Mesh 设备（点开即列，无需搜索）。",
+          "knx_entities": "官方 KNX 集成的全部实体（继电器等，点开即列）。",
+          "other_entities": "任意同类型 HA 实体（开关/灯/窗帘/温控等）。",
           "direction": "双向：任意一端驱动其余；单向：仅第一个驱动其余。",
           "enabled": "关闭后保留配置但不执行同步。",
           "debounce_ms": "状态变化后的合并等待时间，全部同步组共用。",

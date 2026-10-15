@@ -301,6 +301,10 @@ SERVICE_DESCRIBE: Final = "describe"
 # ---------------------------------------------------------------------------
 CONF_SYNC_NAME: Final = "name"
 CONF_SYNC_ENTITIES: Final = "entities"
+# 表单层字段（仅 config flow 用，提交时合并进 entities）：按平台分组快速筛选
+CONF_SYNC_MESH_ENTITIES: Final = "mesh_entities"
+CONF_SYNC_KNX_ENTITIES: Final = "knx_entities"
+CONF_SYNC_OTHER_ENTITIES: Final = "other_entities"
 CONF_SYNC_DIRECTION: Final = "direction"
 CONF_SYNC_ENABLED: Final = "enabled"
 CONF_SYNC_DEBOUNCE_MS: Final = "debounce_ms"

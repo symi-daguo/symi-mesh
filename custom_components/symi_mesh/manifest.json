@@ -1,17 +1,23 @@
 {
   "domain": "symi_mesh",
   "name": "SYMI 亖米 Mesh 网关",
-  "codeowners": ["@symi-daguo"],
+  "codeowners": [
+    "@symi-daguo"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/symi-daguo/symi-mesh-ha",
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/symi-daguo/symi-mesh-ha/issues",
-  "loggers": ["custom_components.symi_mesh"],
+  "loggers": [
+    "custom_components.symi_mesh"
+  ],
   "quality_scale": "bronze",
-  "requirements": ["serialx>=1.0"],
+  "requirements": [
+    "serialx>=1.0"
+  ],
   "version": "1.0.0",
-  "homeassistant": "2024.1.0",
+  "homeassistant": "2024.3.0",
   "after_dependencies": []
 }

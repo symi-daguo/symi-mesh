@@ -15,6 +15,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    EntityFilterSelectorConfig,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -37,6 +38,9 @@ from .const import (
     CONF_QUERY_ON_STARTUP,
     CONF_RECONNECT_INTERVAL,
     CONF_SERIAL_PORT,
+    CONF_SYNC_KNX_ENTITIES,
+    CONF_SYNC_MESH_ENTITIES,
+    CONF_SYNC_OTHER_ENTITIES,
     CONF_SYNC_DEBOUNCE_MS,
     CONF_SYNC_DIRECTION,
     CONF_SYNC_ENABLED,
@@ -208,13 +212,66 @@ def _gateway_options_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
+def _split_sync_entities(hass: HomeAssistant, entities: list[str]) -> dict[str, list[str]]:
+    """把已选实体按来源平台拆成 mesh/knx/other 三组（表单分组展示）。"""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    buckets: dict[str, list[str]] = {"mesh": [], "knx": [], "other": []}
+    for eid in entities:
+        entry = registry.async_get(eid)
+        platform = entry.platform if entry else None
+        if platform == DOMAIN:
+            buckets["mesh"].append(eid)
+        elif platform == "knx":
+            buckets["knx"].append(eid)
+        else:
+            buckets["other"].append(eid)
+    return buckets
+
+
+def _merge_sync_entities(user_input: dict[str, Any]) -> list[str]:
+    """合并三组选择字段为同步实体列表（保序去重）。"""
+    merged: list[str] = []
+    for key in (CONF_SYNC_MESH_ENTITIES, CONF_SYNC_KNX_ENTITIES, CONF_SYNC_OTHER_ENTITIES):
+        for eid in user_input.get(key) or []:
+            if eid not in merged:
+                merged.append(eid)
+    return merged
+
+
+def _auto_sync_name(hass: HomeAssistant, entities: list[str]) -> str:
+    """按所选实体的友好名自动生成「A ↔ B」。"""
+    parts = []
+    for eid in entities:
+        state = hass.states.get(eid)
+        name = (state.attributes.get("friendly_name") if state else None) or eid
+        parts.append(name)
+    return " ↔ ".join(parts)
+
+
 def _sync_schema(hass: HomeAssistant, defaults: dict[str, Any]) -> vol.Schema:
     settings = get_settings(hass)
+    buckets = _split_sync_entities(hass, defaults.get(CONF_SYNC_ENTITIES) or [])
     return vol.Schema(
         {
-            vol.Required(CONF_SYNC_NAME, default=defaults.get(CONF_SYNC_NAME, "")): TextSelector(),
+            vol.Optional(CONF_SYNC_NAME, default=defaults.get(CONF_SYNC_NAME, "")): TextSelector(),
             vol.Required(
-                CONF_SYNC_ENTITIES, default=defaults.get(CONF_SYNC_ENTITIES, [])
+                CONF_SYNC_MESH_ENTITIES, description={"suggested_value": buckets["mesh"]}
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    multiple=True, filter=[EntityFilterSelectorConfig(integration=DOMAIN)]
+                )
+            ),
+            vol.Required(
+                CONF_SYNC_KNX_ENTITIES, description={"suggested_value": buckets["knx"]}
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    multiple=True, filter=[EntityFilterSelectorConfig(integration="knx")]
+                )
+            ),
+            vol.Required(
+                CONF_SYNC_OTHER_ENTITIES, description={"suggested_value": buckets["other"]}
             ): EntitySelector(
                 EntitySelectorConfig(multiple=True, domain=list(SYNCABLE_DOMAINS))
             ),
@@ -255,15 +312,21 @@ def _sync_schema(hass: HomeAssistant, defaults: dict[str, Any]) -> vol.Schema:
 
 def _validate_sync(user_input: dict[str, Any]) -> dict[str, str]:
     errors: dict[str, str] = {}
-    name = str(user_input.get(CONF_SYNC_NAME) or "").strip()
     entities = user_input.get(CONF_SYNC_ENTITIES) or []
-    if not name:
-        errors[CONF_SYNC_NAME] = "name_required"
     if not isinstance(entities, list) or len(entities) < 2:
         errors[CONF_SYNC_ENTITIES] = "need_two_entities"
     elif len(set(entities)) != len(entities):
         errors[CONF_SYNC_ENTITIES] = "duplicate_entities"
     return errors
+
+
+def _prepare_sync_input(hass: HomeAssistant, user_input: dict[str, Any]) -> list[str]:
+    """合并三组选择字段、自动补名，返回合并后的实体列表。"""
+    entities = _merge_sync_entities(user_input)
+    user_input[CONF_SYNC_ENTITIES] = entities
+    if not str(user_input.get(CONF_SYNC_NAME) or "").strip() and entities:
+        user_input[CONF_SYNC_NAME] = _auto_sync_name(hass, entities)
+    return entities
 
 
 def _normalize_sync_group(user_input: dict[str, Any]) -> dict[str, Any]:
@@ -385,8 +448,8 @@ class SymiMeshConfigFlow(ConfigFlow, domain=DOMAIN):
         defaults = dict(user_input or {})
 
         if user_input is not None:
+            entities = _prepare_sync_input(self.hass, user_input)
             errors = _validate_sync(user_input)
-            entities = list(user_input.get(CONF_SYNC_ENTITIES) or [])
             if entities:
                 _, path_tip = entities_path_summary(self.hass, entities)
             if not errors:
@@ -464,8 +527,8 @@ class SymiSyncOptionsFlow(OptionsFlow):
         _, path_tip = entities_path_summary(self.hass, entities)
 
         if user_input is not None:
+            entities = _prepare_sync_input(self.hass, user_input)
             errors = _validate_sync(user_input)
-            entities = list(user_input.get(CONF_SYNC_ENTITIES) or [])
             if entities:
                 _, path_tip = entities_path_summary(self.hass, entities)
             if not errors:

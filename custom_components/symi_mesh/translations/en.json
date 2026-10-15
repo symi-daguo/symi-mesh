@@ -34,14 +34,26 @@
       },
       "knx_sync": {
         "title": "Add bidirectional sync group",
-        "description": "Pick at least two entities to keep in sync (e.g. a KNX switch and a mesh switch). Entities in one group always share the same state.\n{path_tip}",
+        "description": "Pick devices directly from the filtered \"Mesh entities\" and \"KNX entities\" lists, or sync any same-type HA entity via \"Other entities\". Entities in one group always share the same state.\n{path_tip}",
         "data": {
-          "name": "Name",
-          "entities": "Entities",
+          "name": "Name (optional)",
+          "mesh_entities": "Mesh entities",
+          "knx_entities": "KNX entities",
+          "other_entities": "Other entities",
           "direction": "Direction",
           "enabled": "Enabled",
           "debounce_ms": "Debounce (global)",
           "outbound_ms": "Outbound interval (global)"
+        },
+        "data_description": {
+          "name": "Leave empty to auto-generate \"A <-> B\" from the picked entities.",
+          "mesh_entities": "All mesh devices of this integration (tap to list).",
+          "knx_entities": "All entities of the official KNX integration (relays etc.).",
+          "other_entities": "Any same-type HA entity (switch/light/cover/climate...).",
+          "direction": "Two-way: any side drives the rest; one-way: first drives the rest.",
+          "enabled": "Keep config without syncing when off.",
+          "debounce_ms": "Merge wait after a state change, shared by all groups.",
+          "outbound_ms": "Minimum interval between writes, shared by all groups."
         }
       }
     },
