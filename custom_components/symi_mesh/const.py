@@ -34,6 +34,7 @@ DEFAULT_CONNECT_TIMEOUT: Final = 10  # seconds
 # Gateway behaviour
 # ---------------------------------------------------------------------------
 CONF_RECONNECT_INTERVAL: Final = "reconnect_interval"
+CONF_SCENE_BINDINGS: Final = "scene_bindings"  # "entity_id=scene_id" 列表（逗号分隔）
 CONF_ENABLE_STATUS_REPORT: Final = "enable_status_report"
 CONF_QUERY_ON_STARTUP: Final = "query_on_startup"
 
@@ -62,6 +63,7 @@ EVENT_NODE_ACK: Final = 0x05
 EVENT_LIST_NODE_UPDATE_RPT: Final = 0x10
 
 OP_EVENT_NODE_STATUS: Final = 0x80
+EVENT_NET_SCENE_ACT: Final = 0x11  # 网络场景执行通知（payload=[addr, scene_no]）
 OP_EVENT_TRANSPARENT_MSG: Final = 0xC0
 OP_RESP_DEVICE_LIST: Final = 0x92
 OP_RESP_DEVICE_CONTROL: Final = 0xB0
@@ -295,6 +297,7 @@ MAX_MIREDS: Final = 500
 SERVICE_SCAN_DEVICES: Final = "scan_devices"
 SERVICE_RELOAD: Final = "reload"
 SERVICE_DESCRIBE: Final = "describe"
+SERVICE_TRIGGER_SCENE: Final = "trigger_scene"
 
 # ---------------------------------------------------------------------------
 # KNX sync defaults (ported from symi_two_way_sync, local path only)

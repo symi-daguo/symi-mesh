@@ -101,10 +101,15 @@ class DeviceInfo:
                 self.state["fanMode"] = attr_type
                 return
             if attr_type == ATTR_BRIGHTNESS and parameters:
-                self.state["brightness"] = parameters[0]
-                self.state["switch"] = parameters[0] > 0
+                # 0 = 关灯上报，保留最后非零亮度记忆（HA 打开时恢复用）
+                if parameters[0] > 0:
+                    self.state["brightness"] = parameters[0]
+                    self.state["switch"] = True
+                else:
+                    self.state["switch"] = False
             elif attr_type == ATTR_COLOR_TEMP and parameters:
-                self.state["colorTemp"] = parameters[0]
+                if parameters[0] > 0:
+                    self.state["colorTemp"] = parameters[0]
             elif attr_type == ATTR_SWITCH and parameters and self.device_type != 5:
                 self.handle_switch_state(parameters, attr_type)
 

@@ -137,7 +137,32 @@ class SymiSwitch(SymiMeshEntity, SwitchEntity):
     def is_on(self) -> bool | None:
         return self._device.get_channel_state(self._channel_num)
 
+    def _bound_scene_id(self) -> int | None:
+        """按键绑定的场景号（网关选项 scene_bindings："entity_id=scene_id" 列表）。"""
+        entry = getattr(self._coordinator, "entry", None)
+        raw = ""
+        if entry is not None:
+            merged = {**entry.data, **entry.options}
+            raw = str(merged.get("scene_bindings") or "")
+        for chunk in raw.replace("\n", ",").split(","):
+            chunk = chunk.strip()
+            if not chunk or "=" not in chunk:
+                continue
+            eid, _, sid = chunk.partition("=")
+            if eid.strip() == self.entity_id:
+                try:
+                    return max(1, min(255, int(sid.strip())))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
     async def async_turn_on(self, **kwargs: Any) -> None:
+        # 场景绑定：turn_on = 发 0x31 场景控制（网关多设备联动），与物理按键一致
+        scene_id = self._bound_scene_id()
+        if scene_id is not None:
+            self._device.state[f"switch_{self._channel_num}"] = True
+            await self._coordinator.async_trigger_scene(scene_id)
+            return
         await self._coordinator.async_set_switch(self._device, self._channel_num, True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -209,10 +234,22 @@ class SymiLight(SymiMeshEntity, LightEntity):
                 self._device, ATTR_BRIGHTNESS, bytes([round(brightness / 2.55)])
             )
         else:
-            # Turn on at the lamp's last level (ON_OFF 0x02 = 0x02).
-            await self._coordinator.async_send_control(
-                self._device, ATTR_SWITCH, bytes([0x02])
-            )
+            # 恢复 mesh 上报的最后亮度 + 色温（协议无记忆字段，灯固件可能不记忆，
+            # 由 HA 侧按最后上报的百分比恢复，与 mesh 显示一致）。
+            last_brightness = state.get("brightness")
+            last_ct = state.get("colorTemp")
+            if last_brightness is not None and last_brightness > 0:
+                await self._coordinator.async_send_control(
+                    self._device, ATTR_BRIGHTNESS, bytes([int(last_brightness)])
+                )
+            if last_ct is not None:
+                await self._coordinator.async_send_control(
+                    self._device, ATTR_COLOR_TEMP, bytes([int(last_ct)])
+                )
+            if (last_brightness is None or last_brightness == 0) and last_ct is None:
+                await self._coordinator.async_send_control(
+                    self._device, ATTR_SWITCH, bytes([0x02])
+                )
         mireds = kwargs.get("color_temp")
         if mireds is None and kwargs.get("color_temp_kelvin") is not None:
             # HA >= 2024.2 passes color_temp_kelvin.

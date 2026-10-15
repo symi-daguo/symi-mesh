@@ -30,6 +30,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_SCENE_BINDINGS,
     CONF_BAUD_RATE,
     CONF_CONNECTION_TYPE,
     CONF_ENABLE_STATUS_REPORT,
@@ -204,6 +205,10 @@ def _gateway_options_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_ENABLE_STATUS_REPORT,
                 default=bool(defaults.get(CONF_ENABLE_STATUS_REPORT, True)),
             ): BooleanSelector(),
+            vol.Optional(
+                CONF_SCENE_BINDINGS,
+                default=str(defaults.get(CONF_SCENE_BINDINGS, "")),
+            ): TextSelector(TextSelectorConfig(multiline=True)),
             vol.Required(
                 CONF_QUERY_ON_STARTUP,
                 default=bool(defaults.get(CONF_QUERY_ON_STARTUP, True)),

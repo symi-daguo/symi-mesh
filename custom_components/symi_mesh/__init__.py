@@ -24,6 +24,7 @@ from .const import (
     KIND_KNX_SYNC,
     SERVICE_DESCRIBE,
     SERVICE_RELOAD,
+    SERVICE_TRIGGER_SCENE,
     SERVICE_SCAN_DEVICES,
 )
 
@@ -184,9 +185,48 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("symi_mesh 状态: %s", snaps)
         hass.bus.async_fire(f"{DOMAIN}_describe", {"entries": snaps})
 
+    async def _trigger_scene(call: Any) -> None:
+        """场景控制：0x31 标准群控（默认）或 0x34 透传（公版/离线场景节点）。"""
+        from .coordinator import SymiMeshCoordinator
+
+        scene_id = int(call.data["scene_id"])
+        transparent = bool(call.data.get("transparent", False))
+        sent = 0
+        for _eid, data in list(hass.data.get(DOMAIN, {}).items()):
+            if str(_eid).startswith("_") or not isinstance(data, dict):
+                continue
+            coordinator: SymiMeshCoordinator | None = data.get("coordinator")
+            if coordinator is None:
+                continue
+            if coordinator.entry.data.get("kind", KIND_GATEWAY) != KIND_GATEWAY:
+                continue
+            try:
+                if transparent:
+                    await coordinator.async_trigger_scene_transparent(scene_id)
+                else:
+                    await coordinator.async_trigger_scene(scene_id)
+                sent += 1
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("场景控制下发失败 scene=%s: %s", scene_id, err)
+        _LOGGER.info("场景控制完成: scene=%s transparent=%s 网关数=%s", scene_id, transparent, sent)
+
+    import homeassistant.helpers.config_validation as cv
+    import voluptuous as vol
+
     hass.services.async_register(DOMAIN, SERVICE_RELOAD, _reload_all)
     hass.services.async_register(DOMAIN, SERVICE_SCAN_DEVICES, _scan_devices)
     hass.services.async_register(DOMAIN, SERVICE_DESCRIBE, _describe)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_TRIGGER_SCENE,
+        _trigger_scene,
+        schema=vol.Schema(
+            {
+                vol.Required("scene_id"): vol.All(vol.Coerce(int), vol.Range(min=1, max=255)),
+                vol.Optional("transparent", default=False): cv.boolean,
+            }
+        ),
+    )
     hass.data[DOMAIN]["_services"] = True
 
 

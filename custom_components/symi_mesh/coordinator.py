@@ -17,6 +17,7 @@ from .const import (
     CONF_QUERY_ON_STARTUP,
     DOMAIN,
     EVENT_LIST_NODE_UPDATE_RPT,
+    EVENT_NET_SCENE_ACT,
     KIND_GATEWAY,
     OP_EVENT_NODE_STATUS,
     OP_RESP_DEVICE_LIST,
@@ -33,9 +34,9 @@ PLATFORMS = (
     "cover",
     "climate",
     "fan",
+    "scene",
     "sensor",
     "binary_sensor",
-    "scene",
     "lock",
 )
 
@@ -61,6 +62,7 @@ class SymiMeshCoordinator:
         self._device_list_deadline: asyncio.Task | None = None
         self._started = False
         self._added_entity_ids: set[str] = set()
+        self._scene_entities: dict[tuple[str, int], Any] = {}
         self._promoted_three_in_one: set[str] = set()
         self._pending_queries: dict[tuple[int, int], int] = {}
         self._query_waiters: dict[tuple[int, int], asyncio.Future] = {}
@@ -143,6 +145,8 @@ class SymiMeshCoordinator:
     def register_platform(self, platform: str, add_entities: Callable[[list], None]) -> None:
         """Platforms register their add_entities callback here."""
         self._platform_adders[platform] = add_entities
+        if platform == "scene":
+            self.restore_scene_entities(add_entities)
         # Catch up with devices discovered before the platform loaded.
         for device in self.registry.all_devices():
             entities = [
@@ -216,6 +220,10 @@ class SymiMeshCoordinator:
             if frame.status == EVENT_LIST_NODE_UPDATE_RPT:
                 # Node-list update event: same payload as a device-list frame.
                 self._handle_device_list_frame(frame, is_update=True)
+            elif frame.status == EVENT_NET_SCENE_ACT:
+                # 网络场景执行通知（payload=[addr_lo addr_hi scene_no]）——
+                # 物理按键（无网关场景/面板）触发场景时上报，用于日志可见场景号 + HA 事件
+                self._handle_scene_notify(frame)
             else:
                 self._handle_status_event(frame)
         # 0xB0 / 0xB2 / 0xB4 are gateway ACK markers — data arrives via 0x80.
@@ -244,6 +252,73 @@ class SymiMeshCoordinator:
             self._device_list_done.set()
             self.hass.async_create_task(self._after_device_list())
 
+    def restore_scene_entities(self, add_entities: Any) -> None:
+        """scene 平台注册后，从实体注册表恢复已知场景实体（防重启重复生成，保留改名）。"""
+        import homeassistant.helpers.entity_registry as er
+
+        registry = er.async_get(self.hass)
+        known: list[Any] = []
+        from .scene import SymiSceneEntity
+
+        for entry in registry.entities.values():
+            uid = entry.unique_id or ""
+            if not uid.startswith("symi_mesh_scene_") or entry.domain != "scene":
+                continue
+            rest = uid[len("symi_mesh_scene_"):]
+            if "_" not in rest:
+                continue
+            mac, _, sid = rest.rpartition("_")
+            try:
+                scene_no = int(sid)
+            except ValueError:
+                continue
+            device = self.registry.get_by_mac(mac)
+            if device is None:
+                continue  # 非本网关设备，跳过（避免多网关重复恢复）
+            name = device.name
+            entity = SymiSceneEntity(self, mac, name, scene_no)
+            self._scene_entities[(mac, scene_no)] = entity
+            known.append(entity)
+        if known:
+            _LOGGER.info("恢复场景实体 %d 个", len(known))
+            add_entities(known)
+
+    def _handle_scene_notify(self, frame: Any) -> None:
+        """网络场景执行通知（0x11）：动态生成/触发对应的 HA scene 实体。
+
+        每个「设备 + 场景号」生成一个 scene 实体（接收方），供 HA 自动化
+        绑定 KNX 场景使用；触发时更新实体状态 + fire 事件。
+        """
+        payload = frame.payload
+        if len(payload) < 3:
+            return
+        addr = payload[0] | (payload[1] << 8)
+        scene_no = payload[2]
+        device = self.registry.get_by_address(addr)
+        mac = device.mac_address if device is not None else f"0x{addr:04X}"
+        name = device.name if device is not None else ""
+        _LOGGER.info("网络场景执行: 设备 %s(%s) -> 场景 %d", name, mac, scene_no)
+        self.hass.bus.async_fire(
+            "symi_mesh_scene_event",
+            {"mac": mac, "name": name, "scene_id": scene_no},
+        )
+
+        key = (mac, scene_no)
+        entity = self._scene_entities.get(key)
+        if entity is not None:
+            entity.notify_scene()
+            return
+        adder = self._platform_adders.get("scene")
+        if adder is None:
+            return  # scene 平台尚未注册，下次触发再建
+        from .scene import SymiSceneEntity
+
+        entity = SymiSceneEntity(self, mac, name, scene_no)
+        self._scene_entities[key] = entity
+        self._added_entity_ids.add(entity.unique_id)
+        adder([entity])
+        entity.notify_scene()
+
     def _handle_status_event(self, frame: Any) -> None:
         try:
             event = parse_status_event(frame)
@@ -259,6 +334,21 @@ class SymiMeshCoordinator:
         was_three_in_one = device.is_three_in_one
         device.update_from_pairs(pairs)
         self._notify_update(device.mac_address)
+
+        # SCENE_PANEL_EVENT（0x07）：场景按键触发 → fire HA 事件（automation 可绑定
+        # knx.send 等 KNX 场景联动）；只在新触发时派发，天然防回环。
+        triggers = device.state.get("sceneTriggers")
+        if triggers is not None:
+            prev = getattr(device, "_last_scene_triggers", None)
+            device._last_scene_triggers = list(triggers)
+            if triggers != prev:
+                fired_keys = [i + 1 for i, hit in enumerate(triggers) if hit]
+                if fired_keys:
+                    self.hass.bus.async_fire(
+                        "symi_mesh_scene_event",
+                        {"mac": device.mac_address, "name": device.name,
+                         "keys": fired_keys},
+                    )
 
         # mesh 面板等外部操作产生的窗帘位置：HA 采纳后必须把该百分比响应回发
         # mesh（0x06 同位置），否则 mesh 端状态错乱。回发后设命令窗口防环。
@@ -453,6 +543,12 @@ class SymiMeshCoordinator:
     async def async_trigger_scene(self, scene_id: int) -> None:
         assert self.transport is not None
         frame = self.transport.protocol.build_scene_control_frame(scene_id)
+        await self.transport.async_send_frame(frame)
+
+    async def async_trigger_scene_transparent(self, scene_id: int) -> None:
+        """透传节点场景执行（0x34 广播 + 重传 5 次）。"""
+        assert self.transport is not None
+        frame = self.transport.protocol.build_scene_control_frame_transparent(scene_id)
         await self.transport.async_send_frame(frame)
 
     async def async_scan_devices(self) -> int:
