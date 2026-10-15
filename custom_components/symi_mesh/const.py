@@ -320,11 +320,11 @@ DEFAULT_AUTHORITY_HOLD_S: Final = 4.0
 DEFAULT_FOLLOWER_QUIET_S: Final = 3.0
 DEFAULT_GROUP_LATCH_S: Final = 4.0
 
-# 死循环熔断：同一实体在窗口内被本引擎写入次数达到上限即判定为同步死循环，
-# 熔断该实体（其余实体不受影响），冷却结束后自动恢复。
-LOOP_WINDOW_S: Final = 60.0
-LOOP_BREAKER_LIMIT: Final = 10
-LOOP_COOLDOWN_S: Final = 300.0
+# 死循环熔断：真正的死循环是毫秒级自动乒乓（A→B→A…），用短窗口高频检测，
+# 避免把「用户反复手动操作」或「对端不可用抖动」误判为死循环而长时间熔断。
+LOOP_WINDOW_S: Final = 2.0
+LOOP_BREAKER_LIMIT: Final = 8
+LOOP_COOLDOWN_S: Final = 60.0
 EVENT_LOOP_BREAKER: Final = f"{DOMAIN}_loop_breaker"
 SYNC_QUEUE_MAX_SIZE: Final = 1024
 SYNC_WORKER_CONCURRENCY: Final = 4

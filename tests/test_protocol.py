@@ -411,7 +411,7 @@ class TestLoopBreaker:
                 {"name": "t", "entities": ["switch.a", "switch.b"],
                  "direction": "two_way", "enabled": True},
             )
-            for _ in range(10):
+            for _ in range(8):
                 eng._record_write("switch.a")
             assert "switch.a" in eng._loop_disabled
             assert "switch.b" not in eng._loop_disabled
@@ -424,7 +424,7 @@ class TestLoopBreaker:
                 {"name": "t2", "entities": ["switch.c"], "direction": "two_way",
                  "enabled": True},
             )
-            for _ in range(9):
+            for _ in range(7):
                 eng2._record_write("switch.c")
             assert "switch.c" not in eng2._loop_disabled
             # 冷却过期后 _enqueue 自动恢复
