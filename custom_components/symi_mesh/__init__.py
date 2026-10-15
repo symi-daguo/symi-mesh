@@ -201,6 +201,25 @@ def _async_maybe_remove_services(hass: HomeAssistant) -> None:
             hass.services.async_remove(DOMAIN, service)
 
 
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry
+) -> bool:
+    """允许用户从设备页面删除无效设备（含其全部实体）。
+
+    网关本体设备不可删（删除即卸载集成，走条目删除）；mesh 子设备一律可删——
+    删除后若网关仍在设备列表中上报该设备，会作为新设备重新被发现。
+    """
+    from .coordinator import gateway_identifier
+
+    if config_entry.data.get("kind", KIND_GATEWAY) != KIND_GATEWAY:
+        return True
+    identifiers = device_entry.identifiers or set()
+    for domain, value in identifiers:
+        if domain == DOMAIN and value == gateway_identifier(config_entry):
+            return False
+    return True
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Clean up the gateway device registry entry when the last gateway goes."""
     kind = entry.data.get("kind", KIND_GATEWAY)

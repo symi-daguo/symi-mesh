@@ -11,7 +11,7 @@ def frame(opcode: int, status: int, payload: bytes) -> bytes:
 
 
 def dev_list(index: int, mac: bytes, addr: int, dtype: int, sub: int) -> bytes:
-    payload = bytes([2, index, *mac, addr & 0xFF, (addr >> 8) & 0xFF, 0xA8, 0x01, dtype, sub, 0x01, 0x00])
+    payload = bytes([3, index, *mac, addr & 0xFF, (addr >> 8) & 0xFF, 0xA8, 0x01, dtype, sub, 0x01, 0x00])
     return frame(0x92, 0x00, payload)
 
 
@@ -33,6 +33,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
     # Two synthetic devices: 1-ch switch (MAC aa..01, addr 0x0300) + curtain (aa..02, 0x0301)
     writer.write(dev_list(0, bytes.fromhex("AAAAAA000001"), 0x0300, 1, 1))
     writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 5, 2))
+    writer.write(dev_list(2, bytes.fromhex("AAAAAA000003"), 0x0302, 7, 1))
     # 连接即推送窗帘多组合状态（0x05=停止 0x06=位置0）——验证 0x80 多组合解析
     writer.write(frame(0x80, 0x06, bytes([0x01, 0x03, 0x05, 0x03, 0x06, 0x00])))
     await writer.drain()
@@ -50,6 +51,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             if op == 0x12:
                 writer.write(dev_list(0, bytes.fromhex("AAAAAA000001"), 0x0300, 1, 1))
                 writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 5, 2))
+                writer.write(dev_list(2, bytes.fromhex("AAAAAA000003"), 0x0302, 7, 1))
             elif op == 0x10:
                 writer.write(frame(0xB0, 0x00, payload))
             elif op == 0x32:
