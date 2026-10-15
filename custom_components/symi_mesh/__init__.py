@@ -209,13 +209,13 @@ async def async_remove_config_entry_device(
     网关本体设备不可删（删除即卸载集成，走条目删除）；mesh 子设备一律可删——
     删除后若网关仍在设备列表中上报该设备，会作为新设备重新被发现。
     """
-    from .coordinator import gateway_identifier
+    from .coordinator import SymiMeshCoordinator
 
     if config_entry.data.get("kind", KIND_GATEWAY) != KIND_GATEWAY:
         return True
     identifiers = device_entry.identifiers or set()
     for domain, value in identifiers:
-        if domain == DOMAIN and value == gateway_identifier(config_entry):
+        if domain == DOMAIN and value == SymiMeshCoordinator.gateway_identifier(config_entry):
             return False
     return True
 

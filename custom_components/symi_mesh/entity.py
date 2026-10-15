@@ -249,7 +249,12 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
     @property
     def current_cover_position(self) -> int | None:
-        return self._device.state.get("curtainPosition")
+        # 真机不上报位置，由运行方向推导：打开=100 关闭=0（用户语义）
+        position = self._device.state.get("curtainPosition")
+        if position is not None:
+            return position
+        opened = self._device.state.get("curtainOpened")
+        return {True: 100, False: 0}.get(opened)
 
     @property
     def is_opening(self) -> bool:
@@ -261,17 +266,23 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
     @property
     def is_closed(self) -> bool | None:
-        # 真机不上报位置（0x06）时无法可靠判断开/合终态，返回 None（unknown）。
         position = self._device.state.get("curtainPosition")
-        if position is None:
-            return None
-        return position == 0
+        if position is not None:
+            return position == 0
+        opened = self._device.state.get("curtainOpened")
+        return {True: False, False: True}.get(opened)
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        # 协议 CURT_RUN_STATUS: 1=打开 2=关闭 3=停止
+        # 协议 CURT_RUN_STATUS: 1=打开 2=关闭 3=停止；方向记忆用于稳态推导
+        self._device.state["curtainOpened"] = True
+        self._device.state["curtainPosition"] = 100
+        self._device.state["curtainAction"] = "opening"
         await self._coordinator.async_send_control(self._device, 0x05, bytes([1]))
 
     async def async_close_cover(self, **kwargs: Any) -> None:
+        self._device.state["curtainOpened"] = False
+        self._device.state["curtainPosition"] = 0
+        self._device.state["curtainAction"] = "closing"
         await self._coordinator.async_send_control(self._device, 0x05, bytes([2]))
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
@@ -279,6 +290,9 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         position = int(kwargs["position"])
+        self._device.state["curtainOpened"] = position > 0
+        self._device.state["curtainPosition"] = position
+        self._device.state["curtainAction"] = "opening" if position > 0 else "closing"
         await self._coordinator.async_send_control(self._device, 0x06, bytes([position]))
 
 
@@ -402,7 +416,11 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
 
 class SymiFan(SymiMeshEntity, FanEntity):
     _attr_supported_features = (
-        FanEntityFeature.SET_SPEED | FanEntityFeature.PRESET_MODE | FanEntityFeature.DIRECTION
+        FanEntityFeature.SET_SPEED
+        | FanEntityFeature.PRESET_MODE
+        | FanEntityFeature.DIRECTION
+        | FanEntityFeature.TURN_ON
+        | FanEntityFeature.TURN_OFF
     )
 
     def __init__(self, device: MeshDevice, coordinator: Any) -> None:
@@ -435,9 +453,16 @@ class SymiFan(SymiMeshEntity, FanEntity):
             return None
         return "reverse" if mode == 1 else "forward"
 
-    async def async_turn_on(self, percentage: int | None = None, **kwargs: Any) -> None:
+    async def async_turn_on(
+        self,
+        percentage: int | None = None,
+        preset_mode: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         await self._coordinator.async_send_control(self._device, 0x68, bytes([0x02]))
-        if percentage is not None:
+        if preset_mode is not None:
+            await self.async_set_preset_mode(preset_mode)
+        elif percentage is not None:
             await self.async_set_percentage(percentage)
 
     async def async_turn_off(self, **kwargs: Any) -> None:

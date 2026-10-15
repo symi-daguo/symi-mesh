@@ -114,8 +114,9 @@ class DeviceInfo:
                 self.handle_switch_state(parameters, attr_type)
 
         elif attr_type == ATTR_CURTAIN_RUN_STATUS:
-            # 双协议兼容（生产 node-red 验证）：status=0 仅米家、3 仅小程序，
-            # 用它们标定协议，再按协议解释 1/2。小程序 1=打开 2=关闭 3=停止。
+            # 真机校准（串口抓包 13:03 序列）：命令表 1=打开 2=关闭 3=停止（node-red 一致），
+            # 上报表与命令表方向相反：0=米家打开中 1=关闭中 2=打开中 3=停止。
+            # status=0 仅米家、3 两协议均有，用它们标定协议类型。
             if parameters:
                 status = parameters[0]
                 self.state["curtainStatus"] = status
@@ -126,15 +127,22 @@ class DeviceInfo:
                     self.state["curtainProtocol"] = "miniprogram"
                     self.state["curtainAction"] = "stopped"
                 elif status == 1:
+                    # 真机校准：1=正在打开（open 命令瞬态回显）；米家 1=关闭中
                     if self.state.get("curtainProtocol") == "mijia":
                         self.state["curtainAction"] = "closing"
                     else:
                         self.state["curtainAction"] = "opening"
+                        self.state["curtainOpened"] = True
+                        self.state["curtainPosition"] = 100
                 elif status == 2:
+                    # 2=到位（稳态，不区分开/关方向——方向由最后动作命令记忆）
                     if self.state.get("curtainProtocol") == "mijia":
                         self.state["curtainAction"] = "stopped"
                     else:
-                        self.state["curtainAction"] = "closing"
+                        self.state["curtainAction"] = "stopped"
+                        self.state["curtainPosition"] = (
+                            100 if self.state.get("curtainOpened") else 0
+                        )
 
         elif attr_type == ATTR_CURTAIN_POSITION:
             if parameters:
