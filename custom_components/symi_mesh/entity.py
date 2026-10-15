@@ -290,9 +290,10 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         position = int(kwargs["position"])
+        # 主控权威：目标位置即最终状态（模组可能不回传到位/位置，直接按到位显示）
         self._device.state["curtainOpened"] = position > 0
         self._device.state["curtainPosition"] = position
-        self._device.state["curtainAction"] = "opening" if position > 0 else "closing"
+        self._device.state["curtainAction"] = "stopped"
         await self._coordinator.async_send_control(self._device, 0x06, bytes([position]))
 
 

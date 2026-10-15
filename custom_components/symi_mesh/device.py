@@ -145,7 +145,10 @@ class DeviceInfo:
                         )
 
         elif attr_type == ATTR_CURTAIN_POSITION:
-            if parameters:
+            # 主控权威：模组回传的电机实际位置码（机械误差/撞墙，如 94%）不采纳，
+            # 位置只由主控动作决定（open=100 / close=0 / set_position=目标值）。
+            # 该模组多数不接真电机、不回位置，位置显示以主控目标为准。
+            if parameters and "curtainPosition" not in self.state:
                 self.state["curtainPosition"] = parameters[0]
 
         elif attr_type == ATTR_DOOR:
