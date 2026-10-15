@@ -449,6 +449,13 @@ class SymiSyncOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ):
+        # HA 要求入口 step 必须叫 init，且 form 的 step_id 必须有同名方法：
+        # 转发到 sync_init 以使用独立的中文标题「同步组参数」。
+        return await self.async_step_sync_init(user_input)
+
+    async def async_step_sync_init(
+        self, user_input: dict[str, Any] | None = None
+    ):
         await async_load_settings(self.hass)
         errors: dict[str, str] = {}
         entry = self.config_entry

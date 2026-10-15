@@ -396,6 +396,13 @@ class SymiMeshCoordinator:
             device.network_address, attr_type, param
         )
         await self.transport.async_send_frame(frame)
+        _LOGGER.info(
+            "控制下发: %s(0x%04X) attr=0x%02X param=%s",
+            device.name,
+            device.network_address,
+            attr_type,
+            param.hex(" ").upper(),
+        )
 
     async def async_set_switch(
         self, device: MeshDevice, channel: int, turn_on: bool
@@ -413,6 +420,12 @@ class SymiMeshCoordinator:
             device.get_current_switch_state(),
         )
         await self.transport.async_send_frame(frame)
+        _LOGGER.info(
+            "控制下发: %s(0x%04X) attr=0x02 param=%s",
+            device.name,
+            device.network_address,
+            frame[6:-1].hex(" ").upper(),
+        )
 
     async def async_trigger_scene(self, scene_id: int) -> None:
         assert self.transport is not None
