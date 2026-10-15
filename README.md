@@ -54,7 +54,7 @@
 | 插卡取电 | `switch` + `binary_sensor` | 插卡检测 |
 | 双色调光灯 | `light` | 亮度 + 色温 |
 | 五色调光灯 | `light` | 亮度 + 色温 + RGB |
-| 智能窗帘 | `cover` | 开/关/停/位置 |
+| 智能窗帘 | `cover` | 开/关/停（位置依设备上报，未上报时显示 unknown） |
 | 温控器 | `climate` | 温度/模式/风速 |
 | 温湿度传感器 | `sensor` × 2 | 温度 + 湿度 |
 | 门磁 / 人体感应 | `binary_sensor` | |

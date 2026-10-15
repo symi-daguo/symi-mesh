@@ -261,6 +261,7 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
     @property
     def is_closed(self) -> bool | None:
+        # 真机不上报位置（0x06）时无法可靠判断开/合终态，返回 None（unknown）。
         position = self._device.state.get("curtainPosition")
         if position is None:
             return None
