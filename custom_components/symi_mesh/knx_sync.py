@@ -498,11 +498,26 @@ class SymiSyncEngine:
         if self._consume_echo(entity_id, new_state):
             return
 
-        # Follower quiet: ignore lag on the entity WE just wrote — never block
-        # the other side's user click (that must become the new master immediately).
+        # Follower quiet: ignore only lag echoes of our own write on this
+        # entity. A value DIFFERENT from what we wrote is a direct user action
+        # on the follower — that must become the new master immediately,
+        # otherwise the post-quiet re-push would bounce the user's command.
         if now < self._quiet_until.get(entity_id, 0.0):
-            _LOGGER.debug("从端静默忽略: %s state=%s", entity_id, new_state.state)
-            return
+            written = self._last_written.get(entity_id)
+            payload_now = extract_payload(new_state, entity_kind(entity_id))
+            if written is not None and (
+                payloads_equal(payload_now, written)
+                or payload_now.get("state") == written.get("state")
+            ):
+                _LOGGER.debug("从端静默忽略（写入确认）: %s state=%s", entity_id, new_state.state)
+                return
+            # External intent: cancel quiet + pending re-push, fall through to
+            # the normal promote path so last-click-wins applies.
+            self._quiet_until.pop(entity_id, None)
+            handle = self._quiet_handles.pop(entity_id, None)
+            if handle is not None:
+                handle.cancel()
+            _LOGGER.info("静默期检测到外部操作，切换主控: %s", entity_id)
 
         kind = entity_kind(entity_id)
         payload = extract_payload(new_state, kind)

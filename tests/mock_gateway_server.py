@@ -32,7 +32,9 @@ def parse_frames(buf: bytearray):
 async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     # Two synthetic devices: 1-ch switch (MAC aa..01, addr 0x0300) + curtain (aa..02, 0x0301)
     writer.write(dev_list(0, bytes.fromhex("AAAAAA000001"), 0x0300, 1, 1))
-    writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 4, 2))
+    writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 5, 2))
+    # 连接即推送窗帘多组合状态（0x05=停止 0x06=位置0）——验证 0x80 多组合解析
+    writer.write(frame(0x80, 0x06, bytes([0x01, 0x03, 0x05, 0x03, 0x06, 0x00])))
     await writer.drain()
     buf = bytearray()
     while True:
@@ -47,15 +49,21 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             op, payload = fr[1], fr[4:-1]
             if op == 0x12:
                 writer.write(dev_list(0, bytes.fromhex("AAAAAA000001"), 0x0300, 1, 1))
-                writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 4, 2))
+                writer.write(dev_list(1, bytes.fromhex("AAAAAA000002"), 0x0301, 5, 2))
             elif op == 0x10:
                 writer.write(frame(0xB0, 0x00, payload))
             elif op == 0x32:
                 writer.write(frame(0xB2, 0x00, payload))
-                writer.write(frame(0x80, 0x06, bytes([payload[0], payload[1], 0x02, 0x01])))
+                # 窗帘状态上报：运行=停止(3) 位置=0
+                writer.write(frame(0x80, 0x06, bytes([payload[0], payload[1], 0x05, 0x03])))
+                writer.write(frame(0x80, 0x06, bytes([payload[0], payload[1], 0x06, 0x00])))
             elif op == 0x30:
                 writer.write(frame(0xB0, 0x00, payload))
                 writer.write(frame(0x80, 0x06, bytes([payload[0], payload[1], payload[2], *payload[3:]])))
+                # 窗帘运行联动位置（真实设备行为）：开→100 关→0，位置变化才产生 HA 事件
+                if payload[2] == 0x05 and payload[3] in (1, 2):
+                    pos = 100 if payload[3] == 1 else 0
+                    writer.write(frame(0x80, 0x06, bytes([payload[0], payload[1], 0x06, pos])))
             await writer.drain()
 
 
