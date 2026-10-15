@@ -937,10 +937,13 @@ class SymiSyncEngine:
         domain, service, data = call
         data = {**data, "entity_id": target_entity_id}
 
-        # Global pacing: local per-target; cloud serialized (one write at a time).
+        # Global pacing: cloud serialized; local unified serial gate.
+        # 批量场景（几十台同时动作）会产生大量并发本地写入，per-target 独立计时
+        # 会让全部帧同时涌入串口/网关（超过 MCU 串口缓冲导致丢帧）——
+        # 本地写入统一走一个串行 gate（outbound_ms 间隔顺序下发）。
         path = entity_path_kind(self.hass, target_entity_id)
         interval = outbound_interval_s(self.hass, path)
-        gate_key = "cloud" if path != "local" else f"local:{target_entity_id}"
+        gate_key = "cloud" if path != "local" else "local_serial"
         _LOGGER.debug(
             "出队写入 path=%s interval=%.3fs -> %s", path, interval, target_entity_id
         )
