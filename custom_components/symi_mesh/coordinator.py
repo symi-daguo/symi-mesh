@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
@@ -259,6 +260,14 @@ class SymiMeshCoordinator:
         device.update_from_pairs(pairs)
         self._notify_update(device.mac_address)
 
+        # mesh 面板等外部操作产生的窗帘位置：HA 采纳后必须把该百分比响应回发
+        # mesh（0x06 同位置），否则 mesh 端状态错乱。回发后设命令窗口防环。
+        echo_pos = device.state.pop("curtainEchoPending", None)
+        if echo_pos is not None:
+            self.hass.async_create_task(
+                self._async_echo_curtain_position(device, int(echo_pos))
+            )
+
         # A response arrived for a pending startup query.
         self._clear_pending_query(network_address)
 
@@ -285,6 +294,20 @@ class SymiMeshCoordinator:
                     for entity in entities:
                         self._added_entity_ids.add(entity.unique_id)
                     adder(entities)
+
+    async def _async_echo_curtain_position(self, device: MeshDevice, pos: int) -> None:
+        """把 mesh 面板等外部操作的位置百分比响应回发 mesh（0x06 同位置）。"""
+        try:
+            await self.async_send_control(device, 0x06, bytes([pos]))
+            device.state["curtainCmdUntil"] = time.time() + 8
+            _LOGGER.info(
+                "窗帘位置响应回发: %s(0x%04X) -> %d%%",
+                device.name,
+                device.network_address,
+                pos,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("窗帘位置响应回发失败: %s -> %d%% (%s)", device.mac_address, pos, err)
 
     async def _after_device_list(self) -> None:
         """Enable status reporting + first state query (three-in-one probe)."""

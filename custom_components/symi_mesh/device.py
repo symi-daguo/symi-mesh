@@ -151,7 +151,8 @@ class DeviceInfo:
 
         elif attr_type == ATTR_CURTAIN_POSITION:
             # 位置上报：主控命令窗口（8s）内=命令回显，忽略（防覆盖主控目标）；
-            # 窗口外=mesh 面板滑动等外部操作，采纳位置（含运行方向）。
+            # 窗口外=mesh 面板滑动等外部操作，采纳位置（含运行方向），
+            # 并标记 curtainEchoPending 由 coordinator 把该百分比响应回发 mesh。
             if parameters:
                 if time.time() < self.state.get("curtainCmdUntil", 0):
                     return
@@ -159,6 +160,7 @@ class DeviceInfo:
                 self.state["curtainPosition"] = pos
                 if pos > 0:
                     self.state["curtainOpened"] = True
+                self.state["curtainEchoPending"] = pos
 
         elif attr_type == ATTR_DOOR:
             if parameters:
