@@ -17,7 +17,7 @@
   "requirements": [
     "serialx>=1.0"
   ],
-  "version": "1.0.0",
+  "version": "1.2.5",
   "homeassistant": "2024.3.0",
   "after_dependencies": []
 }
