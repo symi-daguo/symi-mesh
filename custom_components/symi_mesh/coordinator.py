@@ -410,9 +410,13 @@ class SymiMeshCoordinator:
         # mesh（0x06 同位置），否则 mesh 端状态错乱。回发后设命令窗口防环。
         echo_pos = device.state.pop("curtainEchoPending", None)
         if echo_pos is not None:
-            self.hass.async_create_task(
-                self._async_echo_curtain_position(device, int(echo_pos))
-            )
+            # 防慢回环：同一位置重复上报（设备重复回显）不回发，
+            # 只有位置真正变化才响应一次。
+            if device.state.get("curtainLastEcho") != int(echo_pos):
+                device.state["curtainLastEcho"] = int(echo_pos)
+                self.hass.async_create_task(
+                    self._async_echo_curtain_position(device, int(echo_pos))
+                )
 
         # A response arrived for a pending startup query.
         self._clear_pending_query(network_address)
