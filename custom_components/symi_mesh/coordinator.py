@@ -101,6 +101,9 @@ class SymiMeshCoordinator:
         data = {**self.entry.data, **self.entry.options}
         self._query_on_startup = bool(data.get(CONF_QUERY_ON_STARTUP, True))
         self._ensure_gateway_device()
+        # 先恢复持久化设备列表（离线状态）——平台注册时立即建实体，
+        # 不等网关返回列表，重启/重载后老设备与场景实体保持可用。
+        await self._async_load_persisted_devices()
         connection_type = data.get("connection_type", "tcp")
         self.transport = GatewayTransport(
             connection_type=connection_type,
@@ -178,6 +181,59 @@ class SymiMeshCoordinator:
                 _LOGGER.exception("Update listener failed for %s", mac)
 
     # -- connection events ---------------------------------------------------
+
+    # -- device persistence --------------------------------------------------
+
+    def _device_store(self) -> Any:
+        from homeassistant.helpers.storage import Store
+
+        return Store(self.hass, 1, f"{DOMAIN}.devices_{self.entry.entry_id}")
+
+    async def _async_load_persisted_devices(self) -> None:
+        """从磁盘恢复上次已知设备（标记离线），供实体恢复使用。"""
+        try:
+            raw = await self._device_store().async_load() or {}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("读取持久化设备列表失败: %s", err)
+            return
+        count = 0
+        for item in raw.get("devices", []):
+            try:
+                self.registry.add_or_update({**item, "online": False})
+                count += 1
+            except Exception:  # noqa: BLE001
+                continue
+        if count:
+            _LOGGER.info("恢复持久化设备 %d 个（等待网关刷新在线状态）", count)
+
+    async def async_persist_devices(self) -> None:
+        """保存当前设备列表（供下次启动恢复实体）。"""
+        items = []
+        for device in self.registry.all_devices():
+            items.append(
+                {
+                    "macAddress": device.mac_address,
+                    "networkAddress": device.network_address,
+                    "deviceType": device.device_type,
+                    "deviceSubType": device.device_sub_type,
+                    "vendorId": device.vendor_id,
+                    "name": device.name,
+                }
+            )
+        try:
+            await self._device_store().async_save({"devices": items})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("保存设备列表失败: %s", err)
+
+    async def async_forget_device(self, mac_address: str) -> None:
+        """用户手动删除设备：从 registry / 持久化 / 场景实体中清理，避免重建。"""
+        device = self.registry.get_by_mac(mac_address)
+        if device is not None:
+            self.registry.remove(mac_address)
+        for key in [k for k in self._scene_entities if k[0] == mac_address]:
+            self._scene_entities.pop(key, None)
+        await self.async_persist_devices()
+        _LOGGER.info("设备已遗忘（手动删除）: %s", mac_address)
 
     async def _on_connected(self) -> None:
         _LOGGER.info("Gateway connected; requesting device list")
@@ -272,10 +328,10 @@ class SymiMeshCoordinator:
                 scene_no = int(sid)
             except ValueError:
                 continue
+            if entry.config_entry_id != self.entry.entry_id:
+                continue  # 非本 entry 创建的实体，跳过（多网关隔离）
             device = self.registry.get_by_mac(mac)
-            if device is None:
-                continue  # 非本网关设备，跳过（避免多网关重复恢复）
-            name = device.name
+            name = device.name if device is not None else (entry.original_name or mac)
             entity = SymiSceneEntity(self, mac, name, scene_no)
             self._scene_entities[(mac, scene_no)] = entity
             known.append(entity)
@@ -405,6 +461,7 @@ class SymiMeshCoordinator:
         await asyncio.sleep(0.5)
         devices = self.registry.all_devices()
         _LOGGER.info("Device list complete: %d devices; enabling status reports", len(devices))
+        await self.async_persist_devices()
         for device in devices:
             try:
                 await self.transport.async_send_frame(

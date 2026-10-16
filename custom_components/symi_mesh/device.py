@@ -487,6 +487,14 @@ class DeviceRegistry:
                 _LOGGER.exception("Device registry listener failed")
         return device, is_new
 
+    def remove(self, mac: str) -> None:
+        """Drop a device (manual removal) so it is not re-created."""
+        device = self.devices.pop(mac, None)
+        if device is None:
+            return
+        self.mac_to_address.pop(mac, None)
+        self.address_to_mac.pop(device.network_address, None)
+
     def get_by_mac(self, mac: str) -> DeviceInfo | None:
         return self.devices.get(mac)
 

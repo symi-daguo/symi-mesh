@@ -254,9 +254,20 @@ async def async_remove_config_entry_device(
     if config_entry.data.get("kind", KIND_GATEWAY) != KIND_GATEWAY:
         return True
     identifiers = device_entry.identifiers or set()
+    clean_mac = None
     for domain, value in identifiers:
-        if domain == DOMAIN and value == SymiMeshCoordinator.gateway_identifier(config_entry):
+        if domain != DOMAIN:
+            continue
+        if value == SymiMeshCoordinator.gateway_identifier(config_entry):
             return False
+        clean_mac = str(value)  # identifiers 用无冒号 mac_clean
+    # 手动删除 mesh 设备：同步清理持久化列表与场景实体，避免重启后被重建
+    coordinator = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {}).get("coordinator")
+    if coordinator is not None and clean_mac is not None:
+        for dev in coordinator.registry.all_devices():
+            if dev.mac_clean == clean_mac:
+                await coordinator.async_forget_device(dev.mac_address)
+                break
     return True
 
 
