@@ -8,7 +8,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import (
-    ConfigEntry,
     ConfigFlow,
     OptionsFlow,
 )
@@ -63,6 +62,7 @@ from .const import (
     SYNCABLE_DOMAINS,
 )
 from .path_kind import entities_path_summary
+from .runtime import SymiMeshConfigEntry
 from .protocol import ProtocolHandler, parse_device_list_frame
 from .settings import async_load_settings, async_save_settings, get_settings
 
@@ -492,7 +492,7 @@ class SymiMeshConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+    def async_get_options_flow(config_entry: SymiMeshConfigEntry) -> OptionsFlow:
         if config_entry.data.get("kind") == KIND_KNX_SYNC:
             return SymiSyncOptionsFlow()
         return SymiGatewayOptionsFlow()

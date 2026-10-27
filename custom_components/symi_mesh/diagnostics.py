@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, KIND_GATEWAY
+from .const import KIND_GATEWAY
+from .runtime import SymiMeshConfigEntry
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry (no secrets are stored)."""
     data = {**entry.data, **entry.options}
@@ -26,8 +26,8 @@ async def async_get_config_entry_diagnostics(
     if data.get("kind") != KIND_GATEWAY:
         return {"entry": redacted}
 
-    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    coordinator = entry_data.get("coordinator")
+    runtime = getattr(entry, "runtime_data", None)
+    coordinator = runtime.coordinator if runtime is not None else None
     if coordinator is None:
         return {"entry": redacted}
 

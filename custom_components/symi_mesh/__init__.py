@@ -27,10 +27,10 @@ from .const import (
     SERVICE_TRIGGER_SCENE,
     SERVICE_SCAN_DEVICES,
 )
-
 if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+    from .runtime import SymiMeshConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,15 +47,14 @@ PLATFORMS = [
 ]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) -> bool:
     kind = entry.data.get("kind", KIND_GATEWAY)
-    hass.data.setdefault(DOMAIN, {})
     if kind == KIND_KNX_SYNC:
         return await _async_setup_sync_entry(hass, entry)
     return await _async_setup_gateway_entry(hass, entry)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) -> bool:
     kind = entry.data.get("kind", KIND_GATEWAY)
     if kind == KIND_KNX_SYNC:
         return await _async_unload_sync_entry(hass, entry)
@@ -67,24 +66,38 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _async_setup_gateway_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def _async_setup_gateway_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
+    from homeassistant.exceptions import ConfigEntryNotReady
+
     from .coordinator import SymiMeshCoordinator
+    from .runtime import SymiMeshRuntime
 
     coordinator = SymiMeshCoordinator(hass, entry)
-    hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
-    await coordinator.async_setup()
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_GATEWAY, coordinator=coordinator)
+    try:
+        await coordinator.async_setup()
+    except ConfigEntryNotReady:
+        entry.runtime_data = SymiMeshRuntime(kind=KIND_GATEWAY)
+        raise
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     _async_register_services(hass)
     return True
 
 
-async def _async_unload_gateway_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def _async_unload_gateway_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
+    from .runtime import SymiMeshRuntime
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    if data and (coordinator := data.get("coordinator")):
+    coordinator = entry.runtime_data.coordinator
+    if coordinator is not None:
         await coordinator.async_shutdown()
-    _async_maybe_remove_services(hass)
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_GATEWAY)
+    _async_maybe_remove_services(hass, entry.entry_id)
     return unload_ok
 
 
@@ -93,7 +106,9 @@ async def _async_unload_gateway_entry(hass: HomeAssistant, entry: ConfigEntry) -
 # ---------------------------------------------------------------------------
 
 
-async def _async_setup_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def _async_setup_sync_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
     from .const import (
         CONF_SYNC_DIRECTION,
         CONF_SYNC_ENABLED,
@@ -102,6 +117,7 @@ async def _async_setup_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> bo
         SYNC_DIRECTION_TWO_WAY,
     )
     from .knx_sync import SymiSyncEngine
+    from .runtime import SymiMeshRuntime
     from .settings import async_load_settings
 
     await async_load_settings(hass)
@@ -114,17 +130,22 @@ async def _async_setup_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> bo
     }
     engine = SymiSyncEngine(hass, group)
     await engine.async_start()
-    hass.data[DOMAIN][entry.entry_id] = {"engine": engine}
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_KNX_SYNC, engine=engine)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     _LOGGER.info("已启用同步组「%s」: %s", group[CONF_SYNC_NAME], group[CONF_SYNC_ENTITIES])
     return True
 
 
-async def _async_unload_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    if data and (engine := data.get("engine")):
+async def _async_unload_sync_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
+    from .runtime import SymiMeshRuntime
+
+    engine = entry.runtime_data.engine
+    if engine is not None:
         await engine.async_stop()
-    _async_maybe_remove_services(hass)
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_KNX_SYNC)
+    _async_maybe_remove_services(hass, entry.entry_id)
     return True
 
 
@@ -133,7 +154,9 @@ async def _async_unload_sync_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
 # ---------------------------------------------------------------------------
 
 
-async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_update_listener(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> None:
     """Reload on config/options change.
 
     HA already reloads the entry itself after an options flow completes; our
@@ -148,58 +171,52 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
         _LOGGER.debug("跳过重载（条目正在被 HA 重载/卸载）: %s", entry.entry_id)
 
 
+def _runtime(entry: SymiMeshConfigEntry) -> SymiMeshRuntime | None:
+    """Runtime data of an entry that is currently loaded (None otherwise)."""
+    return getattr(entry, "runtime_data", None)
+
+
+def _gateway_coordinators(hass: HomeAssistant) -> list[Any]:
+    """Coordinators of every loaded gateway entry, in registry order."""
+    coordinators = []
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        runtime = _runtime(entry)
+        if runtime is not None and runtime.coordinator is not None:
+            coordinators.append(runtime.coordinator)
+    return coordinators
+
+
 def _async_register_services(hass: HomeAssistant) -> None:
-    if hass.data[DOMAIN].get("_services"):
+    if hass.services.has_service(DOMAIN, SERVICE_RELOAD):
         return
 
     async def _reload_all(_call: Any) -> None:
-        for eid in list(hass.data.get(DOMAIN, {})):
-            if str(eid).startswith("_"):
-                continue
-            await hass.config_entries.async_reload(eid)
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            await hass.config_entries.async_reload(entry.entry_id)
 
-    async def _scan_devices(call: Any) -> None:
-        from .coordinator import SymiMeshCoordinator
-
+    async def _scan_devices(_call: Any) -> None:
         count = 0
-        for _eid, data in list(hass.data.get(DOMAIN, {}).items()):
-            if str(_eid).startswith("_") or not isinstance(data, dict):
-                continue
-            coordinator: SymiMeshCoordinator | None = data.get("coordinator")
-            if coordinator is not None:
-                count = await coordinator.async_scan_devices()
+        for coordinator in _gateway_coordinators(hass):
+            count = await coordinator.async_scan_devices()
         _LOGGER.info("设备扫描完成，当前设备数: %s", count)
 
     async def _describe(_call: Any) -> None:
         snaps = []
-        for eid, data in hass.data.get(DOMAIN, {}).items():
-            if str(eid).startswith("_") or not isinstance(data, dict):
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            runtime = _runtime(entry)
+            engine = runtime.engine if runtime is not None else None
+            if engine is None:
                 continue
-            engine = data.get("engine")
-            snaps.append(
-                {
-                    "entry_id": eid,
-                    "snapshot": engine.describe() if engine is not None else None,
-                }
-            )
+            snaps.append({"entry_id": entry.entry_id, "snapshot": engine.describe()})
         _LOGGER.info("symi_mesh 状态: %s", snaps)
         hass.bus.async_fire(f"{DOMAIN}_describe", {"entries": snaps})
 
     async def _trigger_scene(call: Any) -> None:
         """场景控制：0x31 标准群控（默认）或 0x34 透传（公版/离线场景节点）。"""
-        from .coordinator import SymiMeshCoordinator
-
         scene_id = int(call.data["scene_id"])
         transparent = bool(call.data.get("transparent", False))
         sent = 0
-        for _eid, data in list(hass.data.get(DOMAIN, {}).items()):
-            if str(_eid).startswith("_") or not isinstance(data, dict):
-                continue
-            coordinator: SymiMeshCoordinator | None = data.get("coordinator")
-            if coordinator is None:
-                continue
-            if coordinator.entry.data.get("kind", KIND_GATEWAY) != KIND_GATEWAY:
-                continue
+        for coordinator in _gateway_coordinators(hass):
             try:
                 if transparent:
                     await coordinator.async_trigger_scene_transparent(scene_id)
@@ -227,22 +244,31 @@ def _async_register_services(hass: HomeAssistant) -> None:
             }
         ),
     )
-    hass.data[DOMAIN]["_services"] = True
 
 
-def _async_maybe_remove_services(hass: HomeAssistant) -> None:
-    remaining = [k for k in hass.data.get(DOMAIN, {}) if not str(k).startswith("_")]
+def _async_maybe_remove_services(
+    hass: HomeAssistant, exclude_entry_id: str | None = None
+) -> None:
+    """Drop the domain services once the last entry is gone."""
+    remaining = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != exclude_entry_id
+    ]
     if remaining:
         return
-    if not hass.data[DOMAIN].pop("_services", None):
-        return
-    for service in (SERVICE_RELOAD, SERVICE_SCAN_DEVICES, SERVICE_DESCRIBE):
+    for service in (
+        SERVICE_RELOAD,
+        SERVICE_SCAN_DEVICES,
+        SERVICE_DESCRIBE,
+        SERVICE_TRIGGER_SCENE,
+    ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
 
 
 async def async_remove_config_entry_device(
-    hass: HomeAssistant, config_entry: ConfigEntry, device_entry
+    hass: HomeAssistant, config_entry: SymiMeshConfigEntry, device_entry
 ) -> bool:
     """允许用户从设备页面删除无效设备（含其全部实体）。
 
@@ -262,7 +288,8 @@ async def async_remove_config_entry_device(
             return False
         clean_mac = str(value)  # identifiers 用无冒号 mac_clean
     # 手动删除 mesh 设备：同步清理持久化列表与场景实体，避免重启后被重建
-    coordinator = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {}).get("coordinator")
+    runtime = _runtime(config_entry)
+    coordinator = runtime.coordinator if runtime is not None else None
     if coordinator is not None and clean_mac is not None:
         for dev in coordinator.registry.all_devices():
             if dev.mac_clean == clean_mac:
@@ -271,7 +298,7 @@ async def async_remove_config_entry_device(
     return True
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) -> None:
     """Clean up the gateway device registry entry when the last gateway goes."""
     kind = entry.data.get("kind", KIND_GATEWAY)
     if kind != KIND_GATEWAY:

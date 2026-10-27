@@ -81,6 +81,8 @@ class GatewayTransport:
         self._connect_callback: Callable[[], Awaitable[None]] | None = None
         self._disconnect_callback: Callable[[], Awaitable[None]] | None = None
         self._reconnect_attempts = 0
+        # 首次连接是否成功由配置条目设置阶段（test-before-setup）等待。
+        self._connected_event = asyncio.Event()
 
     # -- callbacks ----------------------------------------------------------
 
@@ -133,6 +135,14 @@ class GatewayTransport:
         self._stop_event.set()
         await self._async_teardown_link()
 
+    async def async_wait_connected(self, timeout: float) -> bool:
+        """Wait for the first successful link; used by test-before-setup."""
+        try:
+            await asyncio.wait_for(self._connected_event.wait(), timeout)
+        except asyncio.TimeoutError:
+            return False
+        return True
+
     # -- connection ---------------------------------------------------------
 
     async def _async_connect_once(self) -> None:
@@ -148,6 +158,7 @@ class GatewayTransport:
             timeout=DEFAULT_CONNECT_TIMEOUT,
         )
         self.connected = True
+        self._connected_event.set()
         _LOGGER.info("Connected to Symi gateway at %s:%s", self.host, self.port)
 
     async def _async_connect_serial(self) -> None:
@@ -158,6 +169,7 @@ class GatewayTransport:
             timeout=DEFAULT_CONNECT_TIMEOUT,
         )
         self.connected = True
+        self._connected_event.set()
         _LOGGER.info("Opened serial port %s at %d baud", self.serial_port, self.baud_rate)
 
     async def _async_teardown_link(self) -> None:
@@ -174,6 +186,7 @@ class GatewayTransport:
             self._writer = None
         self._reader = None
         self.connected = False
+        self._connected_event.clear()
         self.protocol.clear_buffer()
         # Drop queued commands that will never be sent.
         while not self._queue.empty():

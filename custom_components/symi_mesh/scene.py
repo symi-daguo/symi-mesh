@@ -12,12 +12,12 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.scene import Scene
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import SymiMeshCoordinator
+from .runtime import SymiMeshConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,9 +83,11 @@ class SymiSceneEntity(Scene):
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: SymiMeshConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up scene entities from the gateway coordinator."""
-    coordinator: SymiMeshCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
+    if coordinator is None:  # pragma: no cover - entry without a gateway link
+        return
     coordinator.register_platform("scene", async_add_entities)

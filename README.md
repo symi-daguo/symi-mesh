@@ -217,22 +217,20 @@ knx:
 
 ### Home Assistant 核心仓库
 
-进入 core 的门槛是 [Bronze 级全部 20 条规则](https://contributors.home-assistant.io/core/quality-scale/rules/#bronze)。当前实际进度：**done 10 条、exempt 4 条、todo 6 条**。
+进入 core 的门槛是 [Bronze 级全部 20 条规则](https://contributors.home-assistant.io/core/quality-scale/rules/#bronze)。逐条状态记在 `custom_components/symi_mesh/quality_scale.yaml`，当前：**done 12 条、exempt 3 条、todo 5 条**。
 
 | 状态 | 规则 |
 |------|------|
-| 满足（10） | `action-setup`、`common-modules`、`config-flow`、`dependency-transparency`、`entity-event-setup`、`entity-unique-id`、`has-entity-name`、`test-before-configure`、`unique-config-entry`、`brands`（仓库内已有 brand 目录，正式收录时需同步到 home-assistant/brands） |
-| 豁免（4） | `appropriate-polling`（local_push 不轮询）、`docs-conditions`、`docs-triggers`、`docs-actions`（本集成只提供服务，不提供 trigger/condition） |
-| 待补（6） | `runtime-data`（仍在用 `hass.data`）、`test-before-setup`（缺 `ConfigEntryNotReady`）、`config-flow-test-coverage`（只有协议/设备层测试）、`docs-high-level-description`、`docs-installation-instructions`、`docs-removal-instructions`（需写到 home-assistant.io 文档仓库） |
+| 满足（12） | `action-setup`、`common-modules`、`config-flow`、`dependency-transparency`、`docs-actions`、`entity-event-setup`、`entity-unique-id`、`has-entity-name`、`runtime-data`、`test-before-configure`、`test-before-setup`、`unique-config-entry` |
+| 豁免（3） | `appropriate-polling`（local_push 不轮询）、`docs-conditions`、`docs-triggers`（不提供 trigger/condition） |
+| 待补（5） | `config-flow-test-coverage`、`brands`（需提交到 home-assistant/brands）、`docs-high-level-description`、`docs-installation-instructions`、`docs-removal-instructions`（需写到 home-assistant.io 文档仓库） |
 
-补齐顺序（每步独立可验证）：
+补齐顺序：
 
-1. `runtime-data`：把 `hass.data[DOMAIN][entry.entry_id]` 换成 `entry.runtime_data`，波及 `__init__.py` 与 9 个平台文件。
-2. `test-before-setup`：首次连接失败抛 `ConfigEntryNotReady`，交给 HA 的退避重试。
-3. `config-flow-test-coverage`：引入 `pytest-homeassistant-custom-component`，覆盖网关成功/失败/重复三条路径。
-4. 文档：在 `home-assistant.io` 仓库新增 `source/_integrations/symi_mesh.markdown`。
-5. `brands`：向 `home-assistant/brands` 提交 `custom_integrations/symi_mesh/`。
-6. 全部 `done` 后写 `quality_scale.yaml`，再把 core 代码从 `custom_components/` 迁到 `homeassistant/components/symi_mesh/` 提 PR。
+1. `config-flow-test-coverage`：引入 `pytest-homeassistant-custom-component`，覆盖连接成功 / 失败 / 重复条目三条路径。
+2. 文档三条：在 `home-assistant.io` 仓库新增 `source/_integrations/symi_mesh.markdown`（内容可从 README 的「支持的设备」「安装」「添加网关」平移）。
+3. `brands`：向 `home-assistant/brands` 提交 `custom_integrations/symi_mesh/`。
+4. 全部 `done` 后，把代码从 `custom_components/` 迁到 `homeassistant/components/symi_mesh/` 提 core PR。
 
 ## 开发
 
@@ -256,6 +254,13 @@ custom_components/symi_mesh/
 ```
 
 ## 变更记录
+
+### 1.2.16
+- 运行时数据迁到 `ConfigEntry.runtime_data`（`runtime.py` 新增类型化 `SymiMeshRuntime`），不再用 `hass.data[DOMAIN][entry_id]`，满足 Bronze `runtime-data`
+- 新增 `ConfigEntryNotReady`：网关首次连接失败时由 HA 退避重试，而不是静默后台重连，满足 `test-before-setup`
+- 平台统一改签 `AddConfigEntryEntitiesCallback` + 类型化条目，服务注册改用 `has_service` 幂等判断
+- 修 `trigger_scene` 服务在最后一个条目卸载时未被移除的问题
+- 新增 `quality_scale.yaml`，逐条登记 Bronze 状态
 
 ### 1.2.15
 - 串口枚举 `list_ports.comports()` 移入执行器线程，消除 HA 日志里的 `Detected blocking call to glob/scandir` 告警（配置串口网关时必现）

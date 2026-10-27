@@ -12,9 +12,11 @@ import time
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import (
     CONF_QUERY_ON_STARTUP,
+    DEFAULT_CONNECT_TIMEOUT,
     DOMAIN,
     EVENT_LIST_NODE_UPDATE_RPT,
     EVENT_NET_SCENE_ACT,
@@ -123,10 +125,21 @@ class SymiMeshCoordinator:
             self._start_task = create(self.transport.async_start(), name="symi_mesh_transport")
         else:  # pragma: no cover - HA < 2025.4
             self._start_task = self.hass.async_create_task(self.transport.async_start())
-        _LOGGER.info(
-            "Symi Mesh coordinator starting (%s)",
-            f"{data.get('host')}:{data.get('port')}" if connection_type == "tcp" else data.get("serial_port"),
+        target = (
+            f"{data.get('host')}:{data.get('port')}"
+            if connection_type == "tcp"
+            else str(data.get("serial_port"))
         )
+        _LOGGER.info("Symi Mesh coordinator starting (%s)", target)
+
+        # test-before-setup（Bronze）：首次加载必须真的连上，否则抛
+        # ConfigEntryNotReady 交给 HA 的退避重试。连上之后进入后台无限重连，
+        # 运行期断线不影响条目本身（实体只变 unavailable）。
+        if not await self.transport.async_wait_connected(DEFAULT_CONNECT_TIMEOUT):
+            await self.async_shutdown()
+            raise ConfigEntryNotReady(
+                f"无法连接 Symi 网关 {target}（{DEFAULT_CONNECT_TIMEOUT}s 内无响应）"
+            )
 
     async def async_shutdown(self) -> None:
         self._started = False
