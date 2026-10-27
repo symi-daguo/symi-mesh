@@ -15,7 +15,7 @@
 ### HACS（推荐）
 
 1. HACS → 集成 → 右上角 `⋮` → 自定义存储库
-2. 仓库地址填 `https://github.com/symi-daguo/symi-mesh-ha`，类别选 **Integration**
+2. 仓库地址填 `https://github.com/symi-daguo/symi-mesh`，类别选 **Integration**
 3. 下载「SYMI 亖米 Mesh 网关」→ 重启 Home Assistant
 
 ### 手动
@@ -198,6 +198,41 @@ knx:
 | `symi_mesh.scan_devices` | 重新请求设备列表，发现新设备 |
 | `symi_mesh.reload` | 重载全部网关与同步组 |
 | `symi_mesh.describe` | 同步队列/回环状态写入日志（排障） |
+
+## 官方收录状态
+
+### HACS 默认仓库
+
+已满足 [HACS 收录条件](https://hacs.xyz/docs/publish/include/)，只差发布 Release 后向 `hacs/default` 提交 PR：
+
+| 条件 | 状态 |
+|------|------|
+| 仓库公开、有 description / issues / topics | 满足 |
+| `hacs.json` 含 `name` | 满足 |
+| brand 目录含 `icon.png` | 满足 |
+| MIT 许可证 | 满足 |
+| HACS Action 通过 | 满足（GitHub Actions 最近一次 success） |
+| Hassfest 通过 | 满足（同上） |
+| 有 GitHub Release | 需把 Release 打到当前版本 |
+
+### Home Assistant 核心仓库
+
+进入 core 的门槛是 [Bronze 级全部 20 条规则](https://contributors.home-assistant.io/core/quality-scale/rules/#bronze)。当前实际进度：**done 10 条、exempt 4 条、todo 6 条**。
+
+| 状态 | 规则 |
+|------|------|
+| 满足（10） | `action-setup`、`common-modules`、`config-flow`、`dependency-transparency`、`entity-event-setup`、`entity-unique-id`、`has-entity-name`、`test-before-configure`、`unique-config-entry`、`brands`（仓库内已有 brand 目录，正式收录时需同步到 home-assistant/brands） |
+| 豁免（4） | `appropriate-polling`（local_push 不轮询）、`docs-conditions`、`docs-triggers`、`docs-actions`（本集成只提供服务，不提供 trigger/condition） |
+| 待补（6） | `runtime-data`（仍在用 `hass.data`）、`test-before-setup`（缺 `ConfigEntryNotReady`）、`config-flow-test-coverage`（只有协议/设备层测试）、`docs-high-level-description`、`docs-installation-instructions`、`docs-removal-instructions`（需写到 home-assistant.io 文档仓库） |
+
+补齐顺序（每步独立可验证）：
+
+1. `runtime-data`：把 `hass.data[DOMAIN][entry.entry_id]` 换成 `entry.runtime_data`，波及 `__init__.py` 与 9 个平台文件。
+2. `test-before-setup`：首次连接失败抛 `ConfigEntryNotReady`，交给 HA 的退避重试。
+3. `config-flow-test-coverage`：引入 `pytest-homeassistant-custom-component`，覆盖网关成功/失败/重复三条路径。
+4. 文档：在 `home-assistant.io` 仓库新增 `source/_integrations/symi_mesh.markdown`。
+5. `brands`：向 `home-assistant/brands` 提交 `custom_integrations/symi_mesh/`。
+6. 全部 `done` 后写 `quality_scale.yaml`，再把 core 代码从 `custom_components/` 迁到 `homeassistant/components/symi_mesh/` 提 PR。
 
 ## 开发
 
