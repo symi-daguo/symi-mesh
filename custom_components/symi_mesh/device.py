@@ -267,6 +267,10 @@ class DeviceInfo:
                 if raw >= 0x8000:
                     raw -= 0x10000
                 temp = raw / 100.0
+                # 0x0000 是三合一面板未接室温探头时的占位值，直接采纳会让
+                # 实体显示 0.0 ℃（实机 5 台全部如此），按无效值丢弃。
+                if temp == 0 or not (-10 <= temp <= 60):
+                    return
                 if self.device_type == 10:
                     self.state["currentTemp"] = temp
                 elif self.device_type == 11:
@@ -365,7 +369,9 @@ class DeviceInfo:
 
         # Floor heating: byte5 bit7=on, byte6=temperature
         self.state["floorHeatingSwitch"] = (byte5 & 0x80) != 0
-        if 18 <= byte6 <= 32:
+        # 设备未设定地暖温度时上报 0，部分机型下限是 16 ℃ —— 原来卡 18..32
+        # 会把这两种真实值全丢掉，导致 target_temperature 恒为 None、滑条不可调。
+        if 5 <= byte6 <= 40:
             self.state["floorHeatingTemp"] = byte6
 
         # Fresh air: byte7 bit7=on, bit4=mode, bit0-2=fan level

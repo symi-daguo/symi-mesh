@@ -359,6 +359,9 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
     def __init__(self, device: MeshDevice, coordinator: Any, variant: str = "aircon") -> None:
         # variant: "aircon" | "floor"
         self._variant = variant
+        # 设备没上报设定温度时（地暖常见：上电后 byte6=0）target_temperature
+        # 会返回 None，HA 前端的温度滑条直接不可拖 —— 用上次设定值兜底。
+        self._last_target: float = 22.0 if variant == "floor" else 24.0
         if variant == "floor":
             super().__init__(device, coordinator, "floor_heating", "地暖")
             self._attr_min_temp = 18
@@ -389,8 +392,12 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         if self._variant == "floor":
-            return self._device.state.get("floorHeatingTemp")
-        return self._device.state.get("targetTemp")
+            value = self._device.state.get("floorHeatingTemp")
+        else:
+            value = self._device.state.get("targetTemp")
+        if value is None:
+            return self._last_target
+        return float(value)
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -428,6 +435,7 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs["temperature"])
+        self._last_target = float(temp)
         if self._variant == "floor":
             await self._coordinator.async_send_control(
                 self._device, 0x6C, bytes([temp])
