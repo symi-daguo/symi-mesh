@@ -217,26 +217,26 @@ knx:
 
 ### Home Assistant 核心仓库
 
-进入 core 的门槛是 [Bronze 级全部 20 条规则](https://contributors.home-assistant.io/core/quality-scale/rules/#bronze)。逐条状态记在 `custom_components/symi_mesh/quality_scale.yaml`，当前：**done 12 条、exempt 3 条、todo 5 条**。
+进入 core 的门槛是 [Bronze 级全部 20 条规则](https://contributors.home-assistant.io/core/quality-scale/rules/#bronze)。逐条状态记在 `custom_components/symi_mesh/quality_scale.yaml`，当前：**done 13 条、exempt 3 条、todo 4 条**。
 
 | 状态 | 规则 |
 |------|------|
-| 满足（12） | `action-setup`、`common-modules`、`config-flow`、`dependency-transparency`、`docs-actions`、`entity-event-setup`、`entity-unique-id`、`has-entity-name`、`runtime-data`、`test-before-configure`、`test-before-setup`、`unique-config-entry` |
+| 满足（13） | `action-setup`、`common-modules`、`config-flow`、`config-flow-test-coverage`、`dependency-transparency`、`docs-actions`、`entity-event-setup`、`entity-unique-id`、`has-entity-name`、`runtime-data`、`test-before-configure`、`test-before-setup`、`unique-config-entry` |
 | 豁免（3） | `appropriate-polling`（local_push 不轮询）、`docs-conditions`、`docs-triggers`（不提供 trigger/condition） |
-| 待补（5） | `config-flow-test-coverage`、`brands`（需提交到 home-assistant/brands）、`docs-high-level-description`、`docs-installation-instructions`、`docs-removal-instructions`（需写到 home-assistant.io 文档仓库） |
+| 待补（4） | `brands`（需提交到 home-assistant/brands）、`docs-high-level-description`、`docs-installation-instructions`、`docs-removal-instructions`（需写到 home-assistant.io 文档仓库） |
 
 补齐顺序：
 
-1. `config-flow-test-coverage`：引入 `pytest-homeassistant-custom-component`，覆盖连接成功 / 失败 / 重复条目三条路径。
-2. 文档三条：在 `home-assistant.io` 仓库新增 `source/_integrations/symi_mesh.markdown`（内容可从 README 的「支持的设备」「安装」「添加网关」平移）。
-3. `brands`：向 `home-assistant/brands` 提交 `custom_integrations/symi_mesh/`。
-4. 全部 `done` 后，把代码从 `custom_components/` 迁到 `homeassistant/components/symi_mesh/` 提 core PR。
+1. 文档三条：在 `home-assistant.io` 仓库新增 `source/_integrations/symi_mesh.markdown`（内容可从 README 的「支持的设备」「安装」「添加网关」平移）。
+2. `brands`：向 `home-assistant/brands` 提交 `custom_integrations/symi_mesh/`。
+3. 全部 `done` 后，把代码从 `custom_components/` 迁到 `homeassistant/components/symi_mesh/` 提 core PR。
 
 ## 开发
 
 ```bash
-# 协议与设备层单测（无需 HA）
-python -m pytest tests/ -q
+# 协议/设备层单测（无需 HA）+ 配置流测试（需 pytest-homeassistant-custom-component）
+uv run --with pytest pytest tests -q                      # 20 例，纯 Python
+uv run --with pytest --with pytest-homeassistant-custom-component pytest -q   # 全部 26 例
 ```
 
 目录结构：

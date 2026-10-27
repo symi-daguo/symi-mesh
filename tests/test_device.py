@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from symi_mesh.device import DeviceInfo
+from custom_components.symi_mesh.device import DeviceInfo
 
 BASE = {
     "macAddress": "AA:BB:CC:00:11:22",

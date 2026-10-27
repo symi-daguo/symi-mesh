@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from symi_mesh.protocol import (
+from custom_components.symi_mesh.protocol import (
     ProtocolHandler,
     calculate_checksum,
     parse_device_list_frame,

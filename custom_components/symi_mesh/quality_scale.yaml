@@ -12,8 +12,7 @@ rules:
   config-flow:
     status: done
   config-flow-test-coverage:
-    status: todo
-    comment: 现有 tests/ 覆盖协议与设备层；config flow 路径测试待补 pytest-homeassistant-custom-component。
+    status: done
   dependency-transparency:
     status: done
   docs-actions:
