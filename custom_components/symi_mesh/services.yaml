@@ -9,3 +9,23 @@ scan_devices:
 describe:
   name: 查看状态
   description: 将各同步组队列与回环缓存状态写入日志（排障用，勿高频调用）。
+
+trigger_scene:
+  name: 执行场景
+  description: 向全部已连接网关下发场景号（标准群控 0x31，或透传 0x34）。
+  fields:
+    scene_id:
+      name: 场景号
+      description: 1-255 的 mesh 场景编号。
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    transparent:
+      name: 透传模式
+      description: 用 0x34 透传帧下发，适配公版/离线场景节点。
+      default: false
+      selector:
+        boolean:

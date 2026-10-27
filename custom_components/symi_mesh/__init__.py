@@ -30,7 +30,7 @@ from .const import (
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-    from .runtime import SymiMeshConfigEntry
+    from .runtime import SymiMeshConfigEntry, SymiMeshRuntime
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@
 - **MAC 唯一实体**：所有实体 `unique_id` 由设备 MAC 生成（如 `ccda20b84a89_switch_2`），重装/换机不重复
 - **KNX 双向同步**：内置同步引擎，在任意 HA 实体（官方 KNX 实体 ↔ 本集成实体）之间建立双向同步，origin 戳记防回环，生产实测无回弹
 - **HACS 就绪**：`hacs.json` + 品牌图标（`brand/`，256/512 + dark 变体）
-- 兼容 **Home Assistant 2024.1 及以后**
+- 兼容 **Home Assistant 2024.8 及以后**（用到类型化 `ConfigEntry` 与 `AddConfigEntryEntitiesCallback`）
 
 > 协议与设备模型移植自生产在用的 [node-red-contrib-symi-mesh](https://github.com/symi-daguo/node-red-contrib-symi-mesh)；同步引擎移植自 [symi_two_way_sync](https://github.com/symi-daguo/symi_two_way_sync)。两个通道可并存，互不冲突。
 
@@ -198,6 +198,7 @@ knx:
 | `symi_mesh.scan_devices` | 重新请求设备列表，发现新设备 |
 | `symi_mesh.reload` | 重载全部网关与同步组 |
 | `symi_mesh.describe` | 同步队列/回环状态写入日志（排障） |
+| `symi_mesh.trigger_scene` | 下发 mesh 场景号（`scene_id` 1-255，`transparent` 走 0x34 透传） |
 
 ## 官方收录状态
 
@@ -243,17 +244,28 @@ uv run --with pytest --with pytest-homeassistant-custom-component pytest -q   # 
 
 ```
 custom_components/symi_mesh/
-├── manifest.json / strings.json / translations/
+├── manifest.json / quality_scale.yaml / strings.json / translations/
 ├── protocol.py      # 帧编解码（0x53 头 + XOR 校验，纯 Python 可单测）
-├── device.py        # 设备模型（MAC↔网络地址、状态机）
-├── gateway.py       # asyncio TCP/串口传输 + 指数退避重连
+├── device.py        # 设备模型（MAC↔网络地址、状态机、三合一取证）
+├── gateway.py       # asyncio TCP/串口传输 + 指数退避重连 + 首连校验
 ├── coordinator.py   # 连接管理、设备发现、事件分发、命令队列
+├── runtime.py       # 类型化 ConfigEntry 运行时数据（runtime_data）
 ├── entity.py        # 全平台实体（unique_id=MAC 派生）
 ├── knx_sync.py      # 双向同步引擎（origin 戳记防回环）
 └── config_flow.py   # 网关配置 + KNX 同步配对（宽屏响应式表单）
+
+tests/
+├── test_protocol.py     # 帧编解码 / 校验 / 分片（11 例）
+├── test_device.py       # 三合一取证 / 状态位 / 无效值（9 例）
+└── test_config_flow.py  # 配置流成功/失败/重复（6 例）
 ```
 
 ## 变更记录
+
+### 1.2.17
+- `services.yaml` 补齐 `trigger_scene`（代码注册了 4 个服务，文档只写了 3 个）
+- 仓库清理：删除与 `brand/` 完全重复的根目录 `icon.png` / `logo.png`；`.workbuddy/` 与 `.pytest_cache/` 加入 `.gitignore`
+- README：最低支持版本修正为 HA 2024.8（类型化 `ConfigEntry` + `AddConfigEntryEntitiesCallback`），目录结构补 `runtime.py` 与 `tests/`
 
 ### 1.2.16
 - 运行时数据迁到 `ConfigEntry.runtime_data`（`runtime.py` 新增类型化 `SymiMeshRuntime`），不再用 `hass.data[DOMAIN][entry_id]`，满足 Bronze `runtime-data`
