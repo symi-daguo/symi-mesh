@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from .const import (
     DEFAULT_CONNECT_TIMEOUT,
@@ -20,6 +20,30 @@ from .const import (
 from .protocol import ProtocolHandler
 
 _LOGGER = logging.getLogger(__name__)
+
+# serialx 是 HA 2026+ 上 pyserial-asyncio 的替代。它首次 import 会连带拉起
+# google.protobuf（几十毫秒），无论放在模块顶层还是懒加载，只要发生在事件
+# 循环线程里就会被 HA 记成 "Detected blocking call"。因此统一走 executor
+# 解析一次并缓存：模块顶层不 import，回调里也不直接 import。
+_OPEN_SERIAL_CALLABLE: Callable[..., Any] | None = None
+
+
+def _import_open_serial_connection() -> Callable[..., Any]:
+    try:
+        from serialx.async_serial import open_serial_connection
+    except ImportError:  # pragma: no cover - HA < 2025
+        from serial_asyncio import open_serial_connection
+    return open_serial_connection
+
+
+async def _async_open_serial_callable() -> Callable[..., Any]:
+    global _OPEN_SERIAL_CALLABLE
+    if _OPEN_SERIAL_CALLABLE is None:
+        loop = asyncio.get_running_loop()
+        _OPEN_SERIAL_CALLABLE = await loop.run_in_executor(
+            None, _import_open_serial_connection
+        )
+    return _OPEN_SERIAL_CALLABLE
 
 FrameCallback = Callable[[object], None]
 
@@ -127,13 +151,7 @@ class GatewayTransport:
         _LOGGER.info("Connected to Symi gateway at %s:%s", self.host, self.port)
 
     async def _async_connect_serial(self) -> None:
-        # serialx is the modern replacement for pyserial-asyncio (HA 2026+);
-        # fall back to the legacy import for older HA versions.
-        try:
-            from serialx.async_serial import open_serial_connection
-        except ImportError:  # pragma: no cover - HA < 2025
-            from serial_asyncio import open_serial_connection
-
+        open_serial_connection = await _async_open_serial_callable()
         _LOGGER.debug("Opening serial port %s @ %d", self.serial_port, self.baud_rate)
         self._reader, self._writer = await asyncio.wait_for(
             open_serial_connection(url=self.serial_port, baudrate=self.baud_rate),

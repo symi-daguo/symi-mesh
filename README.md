@@ -220,6 +220,25 @@ custom_components/symi_mesh/
 └── config_flow.py   # 网关配置 + KNX 同步配对（宽屏响应式表单）
 ```
 
+## 变更记录
+
+### 1.2.15
+- 串口枚举 `list_ports.comports()` 移入执行器线程，消除 HA 日志里的 `Detected blocking call to glob/scandir` 告警（配置串口网关时必现）
+- `serialx` 首次导入同样走执行器并缓存，消除 `gateway.py` 的 `import_module` 阻塞告警
+
+### 1.2.14
+- 地暖设定温度解析范围 `18..32` 放宽到 `5..40`：设备上报 16（部分机型下限）或 0 不再被丢弃
+- `target_temperature` 增加「上次设定值」兜底（地暖 22 / 空调 24），滑条始终可拖
+- `0x16` 室温上报 `0x0000`（面板未接室温探头）按无效值丢弃，不再显示 0.0 ℃
+
+### 1.2.13 / 1.2.12
+- 空调风速跨协议归一：KNX 的 `off / low / 0% / 33% / 1 / 2 / 3` 与 mesh 的 `low / medium / high / auto` 互转，目标表达不了的档位丢弃而不是硬发
+- 温度与风速拆成多次服务调用（`climate.set_temperature` 不接受 `fan_mode`，原实现会静默丢掉风速）
+- 重启后以组内第一个实体为准自动对齐一次，两端不再各说各话
+- 目标实体不可用时不再入队、不再重试 5 次，启动不再刷 4 条 WARNING
+- 三合一取证拆分：只上报新风的面板不再凭空长出地暖实体
+- 灯色温改用 `color_temp_kelvin`（HA 2026 已移除 `LightEntity.color_temp`）
+
 ## License
 
 MIT

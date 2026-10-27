@@ -414,7 +414,9 @@ class SymiMeshConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ):
         errors: dict[str, str] = {}
-        ports = _detect_serial_ports()
+        # 串口枚举要 glob /dev 并读 sysfs，属于阻塞 IO；放在事件循环里会被
+        # HA 记为 "Detected blocking call"（实测触发过 7 条 glob/scandir 告警）。
+        ports = await self.hass.async_add_executor_job(_detect_serial_ports)
         if user_input is not None:
             port_path = str(user_input[CONF_SERIAL_PORT]).strip()
             baud_rate = int(user_input[CONF_BAUD_RATE])
