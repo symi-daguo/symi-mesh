@@ -53,7 +53,15 @@ class DeviceInfo:
         self.online: bool = data.get("online", True)
         self.state: dict[str, Any] = {}
         self.last_seen: float = time.time()
-        self.is_three_in_one: bool = False
+        # 三合一面板的三个子系统各自独立取证：只上报新风的面板不应凭空
+        # 长出地暖实体（0x6A 与 0x6C 是不同属性，证据不能互借）。
+        self.has_fresh_air: bool = bool(data.get("hasFreshAir", False))
+        self.has_floor_heating: bool = bool(data.get("hasFloorHeating", False))
+        self.is_three_in_one: bool = bool(
+            data.get("isThreeInOne", False)
+            or self.has_fresh_air
+            or self.has_floor_heating
+        )
         self.registry = registry
         self.name = data.get("name") or self.generate_name()
         self.channels = self.get_channel_count()
@@ -285,42 +293,56 @@ class DeviceInfo:
 
         elif attr_type == ATTR_FRESH_AIR_SWITCH:
             if parameters:
-                if self.device_type == 10:
-                    self.is_three_in_one = True
+                self._mark_fresh_air()
                 self.state["freshAirSwitch"] = parameters[0] == 0x02
-            elif self.is_three_in_one:
+            elif self.has_fresh_air:
                 self.state["freshAirSwitch"] = False
 
         elif attr_type == ATTR_FRESH_AIR_MODE:
-            if self.is_three_in_one and parameters:
+            if self.has_fresh_air and parameters:
                 self.state["freshAirMode"] = parameters[0]
 
         elif attr_type == ATTR_FRESH_AIR_SPEED:
             if parameters:
-                if self.device_type == 10:
-                    self.is_three_in_one = True
+                self._mark_fresh_air()
                 self.state["freshAirSpeed"] = parameters[0]
-            elif self.is_three_in_one:
+            elif self.has_fresh_air:
                 self.state["freshAirSpeed"] = 4
 
         elif attr_type == ATTR_FLOOR_HEATING_SWITCH:
             if parameters:
-                if self.device_type == 10:
-                    self.is_three_in_one = True
+                self._mark_floor_heating()
                 self.state["floorHeatingSwitch"] = parameters[0] == 0x02
-            elif self.is_three_in_one:
+            elif self.has_floor_heating:
                 self.state["floorHeatingSwitch"] = False
 
         elif attr_type == ATTR_FLOOR_HEATING_TEMP:
-            if self.is_three_in_one and parameters:
+            if parameters:
+                self._mark_floor_heating()
                 self.state["floorHeatingTemp"] = parameters[0]
                 self.state["floorHeatingSwitch"] = True
 
         elif attr_type == ATTR_THREE_IN_ONE:
             if len(parameters) >= 8:
-                if self.device_type == 10:
-                    self.is_three_in_one = True
+                self._mark_fresh_air()
+                self._mark_floor_heating()
                 self._handle_three_in_one_state(parameters)
+
+    def _mark_fresh_air(self) -> None:
+        """新风子系统有真实上报：允许创建新风实体。"""
+        if self.device_type != 10:
+            return
+        if not self.has_fresh_air:
+            self.has_fresh_air = True
+            self.is_three_in_one = True
+
+    def _mark_floor_heating(self) -> None:
+        """地暖子系统有真实上报：允许创建地暖实体。"""
+        if self.device_type != 10:
+            return
+        if not self.has_floor_heating:
+            self.has_floor_heating = True
+            self.is_three_in_one = True
 
     def _handle_three_in_one_state(self, parameters: bytes) -> None:
         """0x94 combined status (8 bytes, per R&D struct definition)."""
@@ -440,6 +462,8 @@ class DeviceInfo:
             "channels": self.channels,
             "online": self.online,
             "isThreeInOne": self.is_three_in_one,
+            "hasFreshAir": self.has_fresh_air,
+            "hasFloorHeating": self.has_floor_heating,
         }
 
 

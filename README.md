@@ -76,6 +76,83 @@
 - **修改参数**：集成条目右侧齿轮（配置）即可修改实体/方向/防抖/出队间隔，保存后自动重载生效
 - 断电/重启后自动恢复
 
+### 三合一（空调 / 新风 / 地暖）对接 KNX
+
+三合一面板在 HA 里是 **3 个实体**，KNX 侧也要建 **3 个实体**，一对一配成 **3 个同步组**：
+
+| Mesh 实体 | 域 | HA 中的名字 | KNX 侧实体 | 说明 |
+|-----------|----|------------|-----------|------|
+| `climate.<mac>_climate` | climate | 设备名（主实体） | `climate` | 空调：温度 + 模式 + 风速 |
+| `fan.<mac>_fresh_air` | fan | 新风 | `fan` | 新风：开关 + 3 档 |
+| `climate.<mac>_floor_heating` | climate | 地暖 | `climate` | 地暖：开关 + 设定温度 |
+
+> 一组只放 2 个实体。三个子系统各建一组；把 6 个实体塞进同一组会共用一套
+> 组意图闩锁，互相压制。
+
+KNX 侧用 YAML 定义（`configuration.yaml`，组地址按客户 ETS 实际替换）：
+
+```yaml
+knx:
+  climate:
+    # 1) 空调：温度 + 开关 + 模式 + 风速
+    - name: "三合一-空调"
+      temperature_address: "1/0/1"                  # DPT 9.001 当前室温（只读）
+      target_temperature_address: "1/0/2"           # DPT 9.001 设定温度（写）
+      target_temperature_state_address: "1/0/3"     # DPT 9.001 设定温度回读
+      on_off_address: "1/0/4"                       # DPT 1.001 开关（写）
+      on_off_state_address: "1/0/5"                 # DPT 1.001 开关回读
+      controller_mode_address: "1/0/6"              # DPT 20.105 自动/制热/制冷/送风/除湿
+      controller_mode_state_address: "1/0/7"
+      fan_speed_address: "1/0/8"                    # DPT 5.010 档位（写）
+      fan_speed_state_address: "1/0/9"
+      fan_max_step: 3                               # 关键：三档，与 mesh 一一对应
+      fan_zero_mode: "auto"                         # 关键：0 档 = 自动风，与 mesh 的 auto 对齐
+      temperature_step: 1
+      min_temp: 16
+      max_temp: 30
+
+    # 3) 地暖：开关 + 设定温度（不要配 controller_mode，否则模式集合对不上）
+    - name: "三合一-地暖"
+      temperature_address: "1/2/1"
+      target_temperature_address: "1/2/2"
+      target_temperature_state_address: "1/2/3"
+      on_off_address: "1/2/4"
+      on_off_state_address: "1/2/5"
+      temperature_step: 1
+      min_temp: 18
+      max_temp: 32
+
+  fan:
+    # 2) 新风：开关 + 3 档
+    - name: "三合一-新风"
+      switch_address: "1/1/1"                       # DPT 1.001 开关（写）
+      switch_state_address: "1/1/2"
+      address: "1/1/3"                              # DPT 5.010 档位 1-3（写）
+      state_address: "1/1/4"
+      max_step: 3                                   # 关键：档位量化到 33/66/100
+```
+
+五条硬约束，缺一条就会出现「数值来回跳 / 服务调用报错」：
+
+1. **`fan_max_step: 3` + `fan_zero_mode: "auto"`**：KNX 的 `fan_modes` 才会是
+   `["auto","low","medium","high"]`，与 mesh 的同名集合完全一致。默认的
+   `fan_zero_mode: off` 会多出一个 mesh 表达不了的 `off`，风速指令会被判为非法值。
+2. **`temperature_step: 1`**：mesh 只接受整度，KNX 默认 0.1 会让 22.5 ℃ 落到 22 ℃，
+   回读差 0.5 触发一次无效回写。
+3. **空调必须用 `controller_mode_address`（DPT 20.105）**：mesh 有 6 种模式
+   （制冷/制热/送风/除湿/自动/关），只用 `heat_cool_address` 只能表达冷热两种。
+4. **地暖不要配 `controller_mode_address`**：地暖在 mesh 侧只有 `off`/`heat`，
+   KNX 侧多出 `cool`/`auto` 时同步会因目标不支持而丢模式。
+5. **新风 auto 档在 KNX `fan` 上无对应值**：KNX fan 只有百分比/档位，没有 preset。
+   mesh 切到 auto 时按最高档（100%）下发；KNX 侧 0% 视为关机。要保留 auto
+   语义，只能用空调 climate 的 `fan_zero_mode: "auto"`，而不是新风 fan。
+
+配好后的检查清单（每项都要在开发者工具里实测）：
+
+- `climate.<空调>` 的 `hvac_modes` 应为 `off/cool/heat/fan_only/dry/auto`，`fan_modes` 为 `auto/low/medium/high`
+- `fan.<新风>` 的 `percentage` 只会出现 `0/33/66/100`，`speed_count` 为 3
+- `climate.<地暖>` 的 `hvac_modes` 应为 `off/heat`，`min_temp/max_temp` 为 `18/32`
+
 ### 高并发与可靠性
 
 | 机制 | 说明 |
@@ -85,7 +162,7 @@
 | 写锁与并发 | 每实体独立写锁串行化 + 全局并发上限，杜绝交叉写入 |
 | 步进保护 | 调光/窗帘渐变过程中的中间值反馈被「从端静默（3s）+ 主控权威（4s）+ 组意图闩锁（4s）」忽略，只认主控期望的最终状态 |
 | 绝对值设备 | 开关等绝对值设备同步为最终值，无步进问题 |
-| **死循环熔断** | 同一实体 60 秒内被本引擎写入 ≥10 次 → 判定死循环，**熔断该实体 300 秒**（其余实体与集成完全不受影响），日志 ERROR + `symi_mesh_loop_breaker` 事件告警，冷却结束自动恢复同步 |
+| **死循环熔断** | 同一实体 **2 秒内**被本引擎写入 **≥8 次** → 判定死循环，**熔断该实体 60 秒**（其余实体与集成完全不受影响），日志 ERROR + `symi_mesh_loop_breaker` 事件告警，冷却结束自动恢复同步 |
 
 > 官方 KNX 集成负责 KNX 网关与组地址；本集成只同步 HA 实体层，不直连 KNX 总线。
 

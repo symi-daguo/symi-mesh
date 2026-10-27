@@ -37,6 +37,10 @@ from homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.util.color import (
+    color_temperature_kelvin_to_mired,
+    color_temperature_mired_to_kelvin,
+)
 
 from .const import (
     ATTR_BRIGHTNESS,
@@ -206,9 +210,20 @@ class SymiLight(SymiMeshEntity, LightEntity):
         return None if value is None else round(value * 2.55)
 
     @property
-    def color_temp(self) -> int | None:
+    def color_temp_kelvin(self) -> int | None:
+        """色温统一用开尔文暴露：HA 2026 已移除 LightEntity.color_temp。"""
         value = self._device.state.get("colorTemp")
-        return None if value is None else _mesh_to_mireds(value)
+        if value is None:
+            return None
+        return color_temperature_mired_to_kelvin(_mesh_to_mireds(value))
+
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        return color_temperature_mired_to_kelvin(MAX_MIREDS)
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        return color_temperature_mired_to_kelvin(MIN_MIREDS)
 
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
@@ -216,14 +231,6 @@ class SymiLight(SymiMeshEntity, LightEntity):
         if not rgb:
             return None
         return (rgb.get("r", 0), rgb.get("g", 0), rgb.get("b", 0))
-
-    @property
-    def min_mireds(self) -> int:
-        return MIN_MIREDS
-
-    @property
-    def max_mireds(self) -> int:
-        return MAX_MIREDS
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         state = self._device.state
@@ -253,7 +260,7 @@ class SymiLight(SymiMeshEntity, LightEntity):
         mireds = kwargs.get("color_temp")
         if mireds is None and kwargs.get("color_temp_kelvin") is not None:
             # HA >= 2024.2 passes color_temp_kelvin.
-            mireds = 1000000 // int(kwargs["color_temp_kelvin"])
+            mireds = color_temperature_kelvin_to_mired(int(kwargs["color_temp_kelvin"]))
         if mireds is not None:
             await self._coordinator.async_send_control(
                 self._device, ATTR_COLOR_TEMP, bytes([_mireds_to_mesh(int(mireds))])
@@ -464,6 +471,9 @@ class SymiFan(SymiMeshEntity, FanEntity):
         | FanEntityFeature.TURN_ON
         | FanEntityFeature.TURN_OFF
     )
+    # Mesh 新风只有 1/2/3 三档（4=auto 走 preset），把档位数如实告诉 HA，
+    # 前端滑条才会只落 33/66/100，与 KNX 侧 max_step=3 的量化点一一对应。
+    _attr_speed_count = 3
 
     def __init__(self, device: MeshDevice, coordinator: Any) -> None:
         super().__init__(device, coordinator, "fresh_air", "新风")
@@ -511,8 +521,13 @@ class SymiFan(SymiMeshEntity, FanEntity):
         await self._coordinator.async_send_control(self._device, 0x68, bytes([0x01]))
 
     async def async_set_percentage(self, percentage: int) -> None:
-        # HA percentage -> mesh speed (1=high, 2=medium, 3=low)
-        speed = 1 if percentage >= 80 else (2 if percentage >= 50 else 3)
+        # HA percentage -> mesh speed (1=high, 2=medium, 3=low).
+        # 阈值与 percentage 回读（100/66/33）互逆，保证 33/66/100 三个点自洽；
+        # 0% 等同于关机，不能落成低风（HA 前端把滑条拉到 0 就是关）。
+        if percentage <= 0:
+            await self.async_turn_off()
+            return
+        speed = 1 if percentage >= 84 else (2 if percentage >= 50 else 3)
         await self._coordinator.async_send_control(self._device, 0x6A, bytes([speed]))
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -723,14 +738,14 @@ def build_entities_for_platform(platform: str, device: MeshDevice, coordinator: 
             entities.append(SymiCover(device, coordinator))
 
     elif platform == "climate":
-        if device.is_three_in_one:
+        if device_type == 10:
             entities.append(SymiClimate(device, coordinator, "aircon"))
-            entities.append(SymiClimate(device, coordinator, "floor"))
-        elif device_type == 10:
-            entities.append(SymiClimate(device, coordinator, "aircon"))
+            # 地暖实体只在地暖属性真正上报后才创建（详见 device.py 取证逻辑）。
+            if device.has_floor_heating:
+                entities.append(SymiClimate(device, coordinator, "floor"))
 
     elif platform == "fan":
-        if device.is_three_in_one:
+        if device.has_fresh_air:
             entities.append(SymiFan(device, coordinator))
 
     elif platform == "scene":

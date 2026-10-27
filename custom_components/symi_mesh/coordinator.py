@@ -63,7 +63,6 @@ class SymiMeshCoordinator:
         self._started = False
         self._added_entity_ids: set[str] = set()
         self._scene_entities: dict[tuple[str, int], Any] = {}
-        self._promoted_three_in_one: set[str] = set()
         self._pending_queries: dict[tuple[int, int], int] = {}
         self._query_waiters: dict[tuple[int, int], asyncio.Future] = {}
         self._gateway_device_id: str | None = None
@@ -218,6 +217,11 @@ class SymiMeshCoordinator:
                     "deviceSubType": device.device_sub_type,
                     "vendorId": device.vendor_id,
                     "name": device.name,
+                    # 三合一取证结果必须落盘：否则 HA 重启后 floor/fan 实体
+                    # 要等面板再次主动上报才会恢复，期间实体不可用。
+                    "isThreeInOne": device.is_three_in_one,
+                    "hasFreshAir": device.has_fresh_air,
+                    "hasFloorHeating": device.has_floor_heating,
                 }
             )
         try:
@@ -387,7 +391,8 @@ class SymiMeshCoordinator:
 
         # One event may carry several (msg_type, param) pairs.
         pairs = parse_status_pairs(frame.payload[2:])
-        was_three_in_one = device.is_three_in_one
+        was_fresh_air = device.has_fresh_air
+        was_floor_heating = device.has_floor_heating
         device.update_from_pairs(pairs)
         self._notify_update(device.mac_address)
 
@@ -422,16 +427,20 @@ class SymiMeshCoordinator:
         self._clear_pending_query(network_address)
 
         # A type-10 panel that answered fresh-air / floor-heating queries is a
-        # three-in-one unit: create the extra fan + floor-heating entities.
-        if (
-            device.device_type == 10
-            and device.is_three_in_one
-            and not was_three_in_one
-            and device.mac_address not in self._promoted_three_in_one
-        ):
-            self._promoted_three_in_one.add(device.mac_address)
-            _LOGGER.info("Device %s identified as three-in-one panel", device.mac_address)
-            for platform in ("fan", "climate"):
+        # three-in-one unit: create only the subsystem entities whose attributes
+        # actually arrived (a fresh-air-only panel must not grow floor heating).
+        new_platforms: list[str] = []
+        if device.has_fresh_air and not was_fresh_air:
+            new_platforms.append("fan")
+        if device.has_floor_heating and not was_floor_heating:
+            new_platforms.append("climate")
+        if new_platforms:
+            _LOGGER.info(
+                "Device %s identified as three-in-one panel (新增平台: %s)",
+                device.mac_address,
+                ", ".join(new_platforms),
+            )
+            for platform in new_platforms:
                 adder = self._platform_adders.get(platform)
                 if adder is None:
                     continue

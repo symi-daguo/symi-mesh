@@ -118,7 +118,11 @@ MSG_TYPE_PARAM_LEN: Final[dict[int, int | None]] = {
     0x0E: 1,   # CARD_DET_STATUS
     0x0F: 3,   # SOFT_VERSION
     0x10: 1,   # STATUS_CHG_RPT_EN_CFG
-    0x11: 1,   # PAIR_FUNC_LOCK_CFG
+    0x11: 5,   # ATTR_RGB: R G B WW CW
+    #   原为 1（遗留的 PAIR_FUNC_LOCK_CFG 取值），但 device.py 的 RGB 分支
+    #   要求 len(parameters) >= 5，MSG_TYPE_PARAM_LEN 决定了 parse_status_pairs
+    #   切分长度 —— 不改会导致 HA 永远收不到完整 RGB（五色调光灯状态不回读）。
+    #   全仓核对：0x11 仅被 device.py 当作 ATTR_RGB 使用，无配对锁消费方。
     0x12: 4,   # KEYS_1_4_CFG
     0x13: 2,   # TEMP_SLEEP_MODE
     0x16: 2,   # SENSOR_TEMP (signed, *100)

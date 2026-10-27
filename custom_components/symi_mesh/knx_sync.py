@@ -169,12 +169,217 @@ def extract_payload(state: "State", kind: str) -> dict[str, Any]:
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Cross-vendor value vocabularies
+# ---------------------------------------------------------------------------
+# 同一台三合一设备，mesh 侧风速是 low/medium/high/auto，KNX 侧取决于 ETS 的
+# DPT 与 fan_max_step：off/low/medium/high、0%/33%/66%/100% 或 0/1/2/3。
+# 不归一化就会互相写不认的值 —— HA 服务调用直接抛错，重试 5 次后打 ERROR，
+# 且对端回读仍是老值，形成「写入失败 → 再判差异 → 再写」的慢性循环。
+_FAN_LEVEL_ALIASES: dict[str, str] = {
+    "off": "off",
+    "0": "off",
+    "0%": "off",
+    "none": "off",
+    "low": "low",
+    "1": "low",
+    "33": "low",
+    "33%": "low",
+    "medium": "medium",
+    "2": "medium",
+    "50%": "medium",
+    "66": "medium",
+    "66%": "medium",
+    "67": "medium",
+    "high": "high",
+    "3": "high",
+    "100": "high",
+    "100%": "high",
+    "on": "high",
+    "auto": "auto",
+    "automatic": "auto",
+}
+_LEVEL_PERCENTAGE: dict[str, int] = {"low": 33, "medium": 66, "high": 100}
+_HVAC_ALIASES: dict[str, str] = {
+    "off": "off",
+    "heat": "heat",
+    "heating": "heat",
+    "cool": "cool",
+    "cooling": "cool",
+    "fan_only": "fan_only",
+    "fan": "fan_only",
+    "dry": "dry",
+    "dehumidification": "dry",
+    "auto": "auto",
+    "heat_cool": "auto",
+}
+
+
+def _fan_level(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _FAN_LEVEL_ALIASES.get(str(value).strip().lower())
+
+
+def normalize_fan_mode(value: Any, target_modes: list[str] | None) -> str | None:
+    """Map a fan-mode string onto the peer's declared mode list.
+
+    Returns ``None`` when the peer cannot express this speed at all — the
+    caller must then drop the attribute instead of sending an invalid value.
+    """
+    level = _fan_level(value)
+    if level is None:
+        return None
+    if not target_modes:
+        return level
+    if str(value) in target_modes:
+        return str(value)
+    for candidate in target_modes:
+        if _fan_level(candidate) == level:
+            return candidate
+    return None
+
+
+def quantize_percentage(value: Any, speed_count: int | None) -> int | None:
+    """Snap a percentage to the peer's discrete steps (3 speeds → 33/66/100)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return 0
+    if not speed_count or speed_count < 2:
+        return int(round(number))
+    step = 100.0 / speed_count
+    index = max(1, min(speed_count, round(number / step)))
+    # 截断而非四舍五入：3 档要落回 mesh 真实档位 33/66/100，
+    # round(66.67)=67 会让 mesh 侧每次都要用容差判等，日志里全是近似匹配。
+    return int(index * 100 / speed_count)
+
+
+def _adapt_fan_payload(
+    payload: dict[str, Any], target_state: "State | None"
+) -> dict[str, Any]:
+    """Fan → fan: quantise percentage, drop preset the peer cannot express."""
+    attrs = (target_state.attributes if target_state is not None else {}) or {}
+    preset_modes = list(attrs.get("preset_modes") or [])
+    speed_count = attrs.get("speed_count")
+    out = dict(payload)
+
+    preset = out.get("preset_mode")
+    if preset is not None:
+        if preset in preset_modes:
+            out["preset_mode"] = preset
+            # 有 preset 时不再叠加 percentage，避免 HA 侧两个速度源打架。
+            out.pop("percentage", None)
+        else:
+            level = _fan_level(preset)
+            out.pop("preset_mode", None)
+            if level == "off":
+                out["state"] = "off"
+                out.pop("percentage", None)
+            else:
+                # KNX fan 没有 preset 概念：auto 只能落到最高档
+                # （README 的「五条硬约束」第 5 条已写明）。
+                percentage = 100 if level == "auto" else _LEVEL_PERCENTAGE.get(level or "")
+                if percentage is None:
+                    out.pop("percentage", None)
+                else:
+                    out["percentage"] = percentage
+
+    if "percentage" in out:
+        target_sc = int(speed_count) if isinstance(speed_count, (int, float)) else (
+            3 if preset_modes else None
+        )
+        quantized = quantize_percentage(out["percentage"], target_sc)
+        if quantized is None:
+            out.pop("percentage", None)
+        elif quantized <= 0:
+            out["state"] = "off"
+            out.pop("percentage", None)
+        else:
+            out["percentage"] = quantized
+
+    if target_state is not None:
+        for key in ("percentage", "preset_mode"):
+            if key in out and key in attrs and _value_close(key, out[key], attrs[key]):
+                out.pop(key)
+        if set(out) <= {"state"} and str(out.get("state")) == str(target_state.state):
+            return None
+    return out
+
+
+def _adapt_climate_payload(
+    payload: dict[str, Any], target_state: "State | None"
+) -> dict[str, Any]:
+    """Climate → climate: normalise fan_mode / hvac_mode, clamp setpoint."""
+    attrs = (target_state.attributes if target_state is not None else {}) or {}
+    fan_modes = list(attrs.get("fan_modes") or [])
+    hvac_modes = [str(m) for m in (attrs.get("hvac_modes") or [])]
+    out = dict(payload)
+
+    if "fan_mode" in out:
+        normalized = normalize_fan_mode(out["fan_mode"], fan_modes)
+        if normalized is None:
+            out.pop("fan_mode", None)
+        else:
+            out["fan_mode"] = normalized
+
+    if "hvac_mode" in out and hvac_modes:
+        mode = str(out["hvac_mode"])
+        if mode not in hvac_modes:
+            alias = _HVAC_ALIASES.get(mode.lower())
+            if alias is not None and alias in hvac_modes:
+                out["hvac_mode"] = alias
+            else:
+                out.pop("hvac_mode", None)
+
+    for key in ("temperature", "target_temp_low", "target_temp_high"):
+        if key not in out:
+            continue
+        low, high = attrs.get("min_temp"), attrs.get("max_temp")
+        try:
+            value = float(out[key])
+            if isinstance(low, (int, float)) and value < float(low):
+                out[key] = float(low)
+            if isinstance(high, (int, float)) and value > float(high):
+                out[key] = float(high)
+        except (TypeError, ValueError):
+            out.pop(key, None)
+
+    if target_state is not None:
+        # 只发真正变了的字段：改风速不该把温度也重发一遍（KNX 总线带宽有限，
+        # 多余报文还会让 ETS 组监控里出现"没人操作却在写"的假象）。
+        for key in ("temperature", "target_temp_low", "target_temp_high",
+                    "hvac_mode", "fan_mode", "swing_mode", "humidity"):
+            if key in out and key in attrs and _value_close(key, out[key], attrs[key]):
+                out.pop(key)
+        if set(out) <= {"state"} and str(out.get("state")) == str(target_state.state):
+            return None
+    return out
+
+
 def convert_payload(
-    payload: dict[str, Any], source_kind: str, target_kind: str
+    payload: dict[str, Any],
+    source_kind: str,
+    target_kind: str,
+    target_state: "State | None" = None,
 ) -> dict[str, Any] | None:
-    """Adapt a source payload for a (possibly different) target domain."""
+    """Adapt a source payload for a (possibly different) target domain.
+
+    ``target_state`` carries the peer's declared capabilities (``fan_modes``,
+    ``preset_modes``, ``hvac_modes``, ``speed_count``).  KNX and mesh describe
+    the same physical fan speed with different vocabularies ("33%"/"1"/
+    "low"), so every cross-vendor value is normalised here — never at the
+    service-call layer, where an unknown value becomes an error and a retry.
+    """
     if source_kind == target_kind:
-        return dict(payload)
+        out = dict(payload)
+        if source_kind == "climate":
+            return _adapt_climate_payload(out, target_state)
+        if source_kind == "fan":
+            return _adapt_fan_payload(out, target_state)
+        return out
 
     # Same-family numeric helpers
     if source_kind in ("number", "input_number") and target_kind in (
@@ -288,6 +493,31 @@ def light_payloads_close(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return True
 
 
+# 跨协议数值抖动容差：KNX 的 66% 与 mesh 的 66.67 四舍五入后差 1，
+# 空调设定值来回换算也可能差 0.1。严格相等会把「同一个值」判成差异，
+# 于是每轮都重新下发一次 —— 这就是慢性乒乓的来源。
+_VALUE_TOLERANCE: dict[str, float] = {
+    "brightness": 3.0,
+    "percentage": 3.0,
+    "temperature": 0.2,
+    "target_temp_low": 0.2,
+    "target_temp_high": 0.2,
+    "current_temperature": 0.2,
+    "humidity": 1.0,
+    "volume_level": 0.02,
+}
+
+
+def _value_close(key: str, a: Any, b: Any) -> bool:
+    tolerance = _VALUE_TOLERANCE.get(key)
+    if tolerance is None:
+        return a == b
+    try:
+        return abs(float(a) - float(b)) <= tolerance
+    except (TypeError, ValueError):
+        return a == b
+
+
 def payloads_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
     # Light-aware approximate compare when either side carries color attrs.
     light_keys = {
@@ -305,8 +535,8 @@ def payloads_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
         keys = set(a) & set(b)
         if "state" not in keys:
             return False
-        return all(a[k] == b[k] for k in keys)
-    return all(a[k] == b[k] for k in a)
+        return all(_value_close(k, a[k], b[k]) for k in keys)
+    return all(_value_close(k, a[k], b[k]) for k in a)
 
 
 def payload_signature(payload: dict[str, Any]) -> str:
@@ -398,6 +628,9 @@ class SymiSyncEngine:
         # 死循环熔断：每实体写入时间戳环形窗口 + 熔断恢复时间表
         self._write_times: dict[str, deque[float]] = {}
         self._loop_disabled: dict[str, float] = {}
+        # 启动对齐：HA 重启后两端各自恢复旧值，不主动对齐就会一直不一致，
+        # 直到有人手动操作。以组内第一个实体首次出现的有效状态为准推一次。
+        self._aligned = False
 
     @property
     def group(self) -> dict[str, Any]:
@@ -408,6 +641,7 @@ class SymiSyncEngine:
 
     async def async_start(self) -> None:
         self._stopping = False
+        self._aligned = False
         self._install_listeners()
         for i in range(WORKER_CONCURRENCY):
             # Background tasks must not block HA startup wrap-up.
@@ -532,6 +766,10 @@ class SymiSyncEngine:
                 _LOGGER.debug("主控重复确认忽略: %s", entity_id)
                 return
 
+        # 首次拿到组内主实体（第一个）的有效状态时做一次启动对齐。
+        if not self._aligned:
+            self._async_align_once(entity_id, payload, now)
+
         # Last click wins on either side — promote immediately and sync out.
         self._promote_master(entity_id, payload, now)
 
@@ -550,6 +788,45 @@ class SymiSyncEngine:
         else:
             deb._delay_s = total_s  # noqa: SLF001 — live retune
         deb.trigger()
+
+    def _async_align_once(
+        self, entity_id: str, payload: dict[str, Any], now: float
+    ) -> None:
+        """首次收敛：组内第一个实体一旦有有效状态，就把它的值推给其余实体。
+
+        HA 重启后 KNX 实体从 restore_state 恢复、mesh 实体等网关首轮上报，
+        只装监听不做对齐，两端会各说各话直到有人手动掰一次。这里以「组内
+        第一个实体」为权威，方向与单向同步的语义一致，用户想换权威只需在
+        配置里调整实体顺序。
+        """
+        ids = self._entity_ids()
+        if not ids or entity_id != ids[0]:
+            return
+        self._aligned = True
+        self._authority_until[entity_id] = now + AUTHORITY_HOLD_S
+        self._last_master_payload[entity_id] = payload
+        self._group_master = entity_id
+        self._group_desired = dict(payload)
+        self._group_desired_until = now + GROUP_LATCH_S
+
+        source_kind = entity_kind(entity_id)
+        pushed = 0
+        for target in ids[1:]:
+            target_kind = entity_kind(target)
+            converted = convert_payload(
+                payload, source_kind, target_kind, self.hass.states.get(target)
+            )
+            if converted is None:
+                continue
+            self._seq += 1
+            self._enqueue(target, converted, source_kind, target_kind, self._seq)
+            pushed += 1
+        _LOGGER.info(
+            "同步组「%s」启动对齐：以 %s 为准，推送 %d 个实体",
+            self._group.get(CONF_NAME),
+            entity_id,
+            pushed,
+        )
 
     def _promote_master(
         self, entity_id: str, payload: dict[str, Any], now: float | None = None
@@ -638,7 +915,7 @@ class SymiSyncEngine:
             if master and master != entity_id:
                 src_kind = entity_kind(master)
                 converted = convert_payload(
-                    self._group_desired, src_kind, kind
+                    self._group_desired, src_kind, kind, state
                 )
                 if converted is not None:
                     _LOGGER.debug(
@@ -752,7 +1029,12 @@ class SymiSyncEngine:
             if target == source_entity_id:
                 continue
             target_kind = entity_kind(target)
-            converted = convert_payload(payload, source_kind, target_kind)
+            converted = convert_payload(
+                payload,
+                source_kind,
+                target_kind,
+                self.hass.states.get(target),
+            )
             if converted is None:
                 _LOGGER.debug("跳过不兼容: %s(%s) -> %s(%s)", source_entity_id, source_kind, target, target_kind)
                 continue
@@ -794,15 +1076,18 @@ class SymiSyncEngine:
             return
 
         tgt_state = self.hass.states.get(target_entity_id)
-        if tgt_state is not None and tgt_state.state not in ("unavailable", "unknown"):
-            tgt_payload = extract_payload(tgt_state, target_kind)
-            cmp = convert_payload(tgt_payload, target_kind, target_kind) or tgt_payload
-            if payloads_equal(cmp, payload) or (
-                cmp.get("state") == payload.get("state")
-                and source_kind != target_kind
-                and set(payload.keys()) <= {"state"}
-            ):
-                return
+        if tgt_state is None or tgt_state.state in ("unavailable", "unknown"):
+            # 目标不可用时入队只会让 worker 空转重试 —— 直接跳过，等它恢复后
+            # 由启动对齐或下一次状态变化接管。
+            _LOGGER.debug("目标当前不可用，跳过入队: %s", target_entity_id)
+            return
+        tgt_payload = extract_payload(tgt_state, target_kind)
+        if payloads_equal(tgt_payload, payload) or (
+            tgt_payload.get("state") == payload.get("state")
+            and source_kind != target_kind
+            and set(payload.keys()) <= {"state"}
+        ):
+            return
 
         # Do not drop here — worker paces by local/cloud outbound interval.
         try:
@@ -863,7 +1148,11 @@ class SymiSyncEngine:
                         await self._apply_once(target_entity_id, payload, kind)
                         return
                     except EntityUnavailableError as err:
-                        last_err = err
+                        # 目标不可用是确定性失败：重试 5 次只会占满 worker
+                        # 并刷 5 行日志，直接交给上层记一条冷却告警。
+                        raise ApplyFailedError(
+                            f"{target_entity_id}: unavailable ({err})"
+                        ) from err
                     except Exception as err:  # noqa: BLE001
                         last_err = err
                         _LOGGER.warning(
@@ -903,8 +1192,8 @@ class SymiSyncEngine:
         if state.state in ("unavailable", "unknown"):
             raise EntityUnavailableError(target_entity_id)
 
-        call = resolve_service_call(kind, payload)
-        if call is None:
+        calls = resolve_service_calls(kind, payload)
+        if not calls:
             return
 
         expected = dict(payload)
@@ -934,7 +1223,7 @@ class SymiSyncEngine:
             FOLLOWER_QUIET_S + 0.05, _schedule_after_quiet
         )
 
-        domain, service, data = call
+        domain, service, data = calls[0]
         data = {**data, "entity_id": target_entity_id}
 
         # Global pacing: cloud serialized; local unified serial gate.
@@ -947,11 +1236,18 @@ class SymiSyncEngine:
         _LOGGER.debug(
             "出队写入 path=%s interval=%.3fs -> %s", path, interval, target_entity_id
         )
-        if path != "local":
-            await self._paced_call(gate_key, interval, domain, service, data)
-        else:
-            await self._pace_outbound(gate_key, interval)
-            await self.hass.services.async_call(domain, service, data, blocking=True)
+        # 一条状态变化可能需求多个服务调用（空调 = 设定温度 + 风速 + 摆风）。
+        # HA 的 climate.set_temperature 不接受 fan_mode，必须拆成独立调用，
+        # 否则「温度变了、风速丢了」，对端下一轮又回写风速 —— 慢性乒乓。
+        for domain, service, data in calls:
+            data = {**data, "entity_id": target_entity_id}
+            if path != "local":
+                await self._paced_call(gate_key, interval, domain, service, data)
+            else:
+                await self._pace_outbound(gate_key, interval)
+                await self.hass.services.async_call(
+                    domain, service, data, blocking=True
+                )
         self._record_write(target_entity_id)
 
     def _record_write(self, entity_id: str) -> None:
@@ -1210,3 +1506,52 @@ def resolve_service_call(
         return "scene", "turn_on", data
 
     return None
+
+
+def _climate_service_calls(
+    payload: dict[str, Any],
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """One climate state change may need several service calls.
+
+    ``climate.set_temperature`` carries the setpoint (and optionally the HVAC
+    mode) but never the fan speed or swing — those are separate services.
+    Sending only the first call silently drops the rest of the payload, and the
+    peer's unchanged value comes back as a "difference" on the next pass.
+    """
+    state = str(payload.get("state", ""))
+    if state == "off" or payload.get("hvac_mode") == "off":
+        return [("climate", "set_hvac_mode", {"hvac_mode": "off"})]
+
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    has_setpoint = any(
+        key in payload
+        for key in ("temperature", "target_temp_high", "target_temp_low")
+    )
+    if has_setpoint:
+        data: dict[str, Any] = {}
+        for key in ("temperature", "target_temp_high", "target_temp_low", "hvac_mode"):
+            if payload.get(key) is not None:
+                data[key] = payload[key]
+        calls.append(("climate", "set_temperature", data))
+    elif payload.get("hvac_mode") is not None:
+        calls.append(("climate", "set_hvac_mode", {"hvac_mode": payload["hvac_mode"]}))
+
+    if payload.get("fan_mode") is not None:
+        calls.append(("climate", "set_fan_mode", {"fan_mode": payload["fan_mode"]}))
+    if payload.get("swing_mode") is not None:
+        calls.append(("climate", "set_swing_mode", {"swing_mode": payload["swing_mode"]}))
+    if payload.get("humidity") is not None:
+        calls.append(("climate", "set_humidity", {"humidity": payload["humidity"]}))
+    if not calls:
+        calls.append(("climate", "turn_on", {}))
+    return calls
+
+
+def resolve_service_calls(
+    kind: str, payload: dict[str, Any]
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Map a payload to the full list of service calls it requires."""
+    if kind == "climate":
+        return _climate_service_calls(payload)
+    call = resolve_service_call(kind, payload)
+    return [call] if call is not None else []
