@@ -262,6 +262,10 @@ tests/
 
 ## 变更记录
 
+### 1.2.18
+- `SymiDiagnosticSensor._attr_entity_category` 由字符串 `"diagnostic"` 改为 `EntityCategory.DIAGNOSTIC`。实体注册表只接受枚举实例，字符串会让语音控制器（type 13）与电视盒（type 17）的实体在 `async_add_entities` 时抛 `ValueError`，整台设备加不进来
+- 新增 `tests/test_entity.py` 做回归防护（2 例）
+
 ### 1.2.17
 - `services.yaml` 补齐 `trigger_scene`（代码注册了 4 个服务，文档只写了 3 个）
 - 仓库清理：删除与 `brand/` 完全重复的根目录 `icon.png` / `logo.png`；`.workbuddy/` 与 `.pytest_cache/` 加入 `.gitignore`

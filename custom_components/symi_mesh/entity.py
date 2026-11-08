@@ -32,6 +32,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import (
     PERCENTAGE,
+    EntityCategory,
     UnitOfTemperature,
 )
 from homeassistant.core import callback
@@ -667,7 +668,9 @@ class SymiLock(SymiMeshEntity, LockEntity):
 
 
 class SymiDiagnosticSensor(SymiMeshEntity, SensorEntity):
-    _attr_entity_category = "diagnostic"
+    # 实体注册表只接受 EntityCategory 实例；写成字符串会让 type 13/17 的实体
+    # 在 async_add_entities 时抛 ValueError，整台设备都加不进来。
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, device: MeshDevice, coordinator: Any, key: str, name: str) -> None:
         super().__init__(device, coordinator, key, name)
