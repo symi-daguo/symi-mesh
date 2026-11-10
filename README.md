@@ -6,7 +6,7 @@
 - **MAC 唯一实体**：所有实体 `unique_id` 由设备 MAC 生成（如 `ccda20b84a89_switch_2`），重装/换机不重复
 - **KNX 双向同步**：内置同步引擎，在任意 HA 实体（官方 KNX 实体 ↔ 本集成实体）之间建立双向同步，origin 戳记防回环，生产实测无回弹
 - **HACS 就绪**：`hacs.json` + 品牌图标（`brand/`，256/512 + dark 变体）
-- 兼容 **Home Assistant 2024.8 及以后**（用到类型化 `ConfigEntry` 与 `AddConfigEntryEntitiesCallback`）
+- 兼容 **Home Assistant 2026.11 及以后**（climate 使用 `native_*` 温度属性，替代 2027.11 将失效的 `current_temperature` / `target_temperature`）
 
 > 协议与设备模型移植自生产在用的 [node-red-contrib-symi-mesh](https://github.com/symi-daguo/node-red-contrib-symi-mesh)；同步引擎移植自 [symi_two_way_sync](https://github.com/symi-daguo/symi_two_way_sync)。两个通道可并存，互不冲突。
 
@@ -261,6 +261,10 @@ tests/
 ```
 
 ## 变更记录
+
+### 1.2.19
+- 适配 HA 2026.11 的 climate 属性改名：`_attr_temperature_unit` → `_attr_native_temperature_unit`、`current_temperature` → `native_current_temperature`、`target_temperature` → `native_target_temperature`。旧属性在 2026.11 起每次加载会打 3 条弃用告警，2027.11 彻底失效
+- `manifest.json` 声明 `homeassistant: 2026.11.0` 最低版本：旧版 HA 没有 `native_*` 桥接，会静默丢温度显示，不如明确拒绝加载
 
 ### 1.2.18
 - `SymiDiagnosticSensor._attr_entity_category` 由字符串 `"diagnostic"` 改为 `EntityCategory.DIAGNOSTIC`。实体注册表只接受枚举实例，字符串会让语音控制器（type 13）与电视盒（type 17）的实体在 `async_add_entities` 时抛 `ValueError`，整台设备加不进来

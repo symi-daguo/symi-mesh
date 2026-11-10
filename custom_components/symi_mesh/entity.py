@@ -352,7 +352,10 @@ class SymiCover(SymiMeshEntity, CoverEntity):
 
 
 class SymiClimate(SymiMeshEntity, ClimateEntity):
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    # HA 2026.11 起 climate 的温标与温度改用 native_* 命名，
+    # 旧的 _attr_temperature_unit / current_temperature / target_temperature
+    # 会持续告警并在 2027.11 停止工作。
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = 16
     _attr_max_temp = 30
     _attr_target_temperature_step = 1
@@ -387,11 +390,11 @@ class SymiClimate(SymiMeshEntity, ClimateEntity):
             self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         return self._device.state.get("currentTemp")
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         if self._variant == "floor":
             value = self._device.state.get("floorHeatingTemp")
         else:
