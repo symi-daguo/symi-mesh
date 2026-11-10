@@ -24,7 +24,7 @@
 
 ## 与旧版集成的关系
 
-仓库里曾有一个更早的实现 `symi-daguo/symi_mesh_gateway`（集成域名 `symi_mesh_gateway`，2025-09 起，2026-10 停更）。当前仓库 `symi-mesh`（域名 `symi_mesh`）是它的替代版本，差异如下：
+早期曾有一个独立实现 `symi_mesh_gateway`（集成域名同名，2025-09 起，2026-10 停更，仓库已于 2026-11 下线）。当前仓库 `symi-mesh`（域名 `symi_mesh`）是它的替代版本，差异如下：
 
 | | `symi_mesh_gateway`（旧，已停更） | `symi-mesh`（当前） |
 |---|---|---|
