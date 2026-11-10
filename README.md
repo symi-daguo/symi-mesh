@@ -22,6 +22,25 @@
 
 将 `custom_components/symi_mesh` 复制到 HA 的 `custom_components/` 目录，重启 HA。
 
+## 与旧版集成的关系
+
+仓库里曾有一个更早的实现 `symi-daguo/symi_mesh_gateway`（集成域名 `symi_mesh_gateway`，2025-09 起，2026-10 停更）。当前仓库 `symi-mesh`（域名 `symi_mesh`）是它的替代版本，差异如下：
+
+| | `symi_mesh_gateway`（旧，已停更） | `symi-mesh`（当前） |
+|---|---|---|
+| 集成域名 | `symi_mesh_gateway` | `symi_mesh` |
+| 连接方式 | TCP 4196 | TCP / 串口（RS485） |
+| 多网关 | 否 | 是 |
+| KNX 双向同步 | 无 | 有（含多组星型中转） |
+| 三合一（空调/新风/地暖） | 只做空调 | 三个子系统按取证分流 |
+| 运行时数据 | `hass.data` | 类型化 `entry.runtime_data` |
+| 质量等级 | 未评级 | Bronze（见 `quality_scale.yaml`） |
+| HACS 收录 | 否 | 是 |
+
+两者域名不同，**从旧版迁移需要先删除旧集成、再装本集成**，不能原地升级。实体 unique_id 都以 MAC 派生，重装后会复用已有实体，历史记录不丢。
+
+串口协议细节请向我方索取（协议手册为供应商文档，不在本仓库分发）。
+
 ## 添加网关
 
 设置 → 设备与服务 → 添加集成 → **SYMI 亖米 Mesh 网关** → 选择「Mesh 网关」：
