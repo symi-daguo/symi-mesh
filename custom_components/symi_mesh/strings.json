@@ -141,6 +141,38 @@
     "describe": {
       "name": "查看状态",
       "description": "将各同步组队列与回环缓存状态写入日志（排障用，勿高频调用）。"
+    },
+    "trigger_scene": {
+      "name": "执行场景",
+      "description": "向全部已连接网关下发场景号（标准群控 0x31，或透传 0x34）。",
+      "fields": {
+        "scene_id": {
+          "name": "场景号",
+          "description": "1-255 的 mesh 场景编号。"
+        },
+        "transparent": {
+          "name": "透传模式",
+          "description": "用 0x34 透传帧下发，适配公版/离线场景节点。"
+        }
+      }
+    },
+    "diagnose_tcp": {
+      "name": "TCP 诊断",
+      "description": "独立连接一次 TCP 网关，发设备列表请求并回传原始收包与解析结果（排障用）。",
+      "fields": {
+        "host": {
+          "name": "地址",
+          "description": "网关地址，IP 或主机名。"
+        },
+        "port": {
+          "name": "端口",
+          "description": "默认 4196。"
+        },
+        "timeout": {
+          "name": "超时",
+          "description": "单次诊断最长等待秒数，默认 6。"
+        }
+      }
     }
   }
 }

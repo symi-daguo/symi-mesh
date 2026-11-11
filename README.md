@@ -218,6 +218,7 @@ knx:
 | `symi_mesh.reload` | 重载全部网关与同步组 |
 | `symi_mesh.describe` | 同步队列/回环状态写入日志（排障） |
 | `symi_mesh.trigger_scene` | 下发 mesh 场景号（`scene_id` 1-255，`transparent` 走 0x34 透传） |
+| `symi_mesh.diagnose_tcp` | 独立探测 TCP 网关：返回连接结果、收包字节数、解析到的设备列表（排障） |
 
 ## 官方收录状态
 
@@ -280,6 +281,13 @@ tests/
 ```
 
 ## 变更记录
+
+### 1.2.20
+- 修设备列表超时路径：原来超时只置位不再往下走，导致「设备已发现但永远不发状态查询」，实体拿不到初值。现在超时同样执行「使能状态上报 + 首次状态查询」
+- TCP 连接关闭 Nagle（`TCP_NODELAY`）：控制帧只有 5 字节，Nagle 会攒包，最多引入 40ms 延迟
+- 新增 `symi_mesh.diagnose_tcp` 服务：独立连一次 TCP 网关，返回「是否连上 / 收到多少字节 / 解析出几台设备 / 错误原因」，不需要依赖已配置的条目，专门用来排查「配置能通过、运行时不发现设备」
+- 收包增加 DEBUG 日志（字节数 + 帧头），开 `custom_components.symi_mesh` 调试级别即可看到
+- `services.yaml` / `strings.json` / `translations` 补齐 `trigger_scene` 与 `diagnose_tcp`（原来只有 3 个服务有描述）
 
 ### 1.2.19
 - 适配 HA 2026.11 的 climate 属性改名：`_attr_temperature_unit` → `_attr_native_temperature_unit`、`current_temperature` → `native_current_temperature`、`target_temperature` → `native_target_temperature`。旧属性在 2026.11 起每次加载会打 3 条弃用告警，2027.11 彻底失效

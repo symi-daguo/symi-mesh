@@ -29,3 +29,32 @@ trigger_scene:
       default: false
       selector:
         boolean:
+
+diagnose_tcp:
+  name: TCP 诊断
+  description: 独立连接一次 TCP 网关，发设备列表请求并回传原始收包与解析结果（排障用）。
+  fields:
+    host:
+      name: 地址
+      description: 网关地址，IP 或主机名。
+      required: true
+      selector:
+        text:
+    port:
+      name: 端口
+      description: 默认 4196。
+      default: 4196
+      selector:
+        number:
+          min: 1
+          max: 65535
+          mode: box
+    timeout:
+      name: 超时
+      description: 单次诊断最长等待秒数，默认 6。
+      default: 6
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box

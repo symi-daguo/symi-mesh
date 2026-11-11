@@ -302,6 +302,7 @@ SERVICE_SCAN_DEVICES: Final = "scan_devices"
 SERVICE_RELOAD: Final = "reload"
 SERVICE_DESCRIBE: Final = "describe"
 SERVICE_TRIGGER_SCENE: Final = "trigger_scene"
+SERVICE_DIAGNOSE_TCP: Final = "diagnose_tcp"
 
 # ---------------------------------------------------------------------------
 # KNX sync defaults (ported from symi_two_way_sync, local path only)

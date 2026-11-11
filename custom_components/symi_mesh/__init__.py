@@ -23,6 +23,7 @@ from .const import (
     KIND_GATEWAY,
     KIND_KNX_SYNC,
     SERVICE_DESCRIBE,
+    SERVICE_DIAGNOSE_TCP,
     SERVICE_RELOAD,
     SERVICE_TRIGGER_SCENE,
     SERVICE_SCAN_DEVICES,
@@ -45,6 +46,16 @@ PLATFORMS = [
     "scene",
     "lock",
 ]
+
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Register domain services once, independent of any config entry.
+
+    诊断类服务（diagnose_tcp）必须在条目加载失败时也能用 —— 那正是它的使用
+    场景。原实现把它们放在条目 setup 里注册，网关连不上时服务根本不存在。
+    """
+    _async_register_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) -> bool:
@@ -83,7 +94,6 @@ async def _async_setup_gateway_entry(
         raise
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    _async_register_services(hass)
     return True
 
 
@@ -97,7 +107,6 @@ async def _async_unload_gateway_entry(
     if coordinator is not None:
         await coordinator.async_shutdown()
     entry.runtime_data = SymiMeshRuntime(kind=KIND_GATEWAY)
-    _async_maybe_remove_services(hass, entry.entry_id)
     return unload_ok
 
 
@@ -145,7 +154,6 @@ async def _async_unload_sync_entry(
     if engine is not None:
         await engine.async_stop()
     entry.runtime_data = SymiMeshRuntime(kind=KIND_KNX_SYNC)
-    _async_maybe_remove_services(hass, entry.entry_id)
     return True
 
 
@@ -227,6 +235,80 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 _LOGGER.warning("场景控制下发失败 scene=%s: %s", scene_id, err)
         _LOGGER.info("场景控制完成: scene=%s transparent=%s 网关数=%s", scene_id, transparent, sent)
 
+    async def _diagnose_tcp(call: Any) -> dict[str, Any]:
+        """独立连一次 TCP 网关，回传原始收包与解析结果。
+
+        不依赖已配置的条目，用于排查「配置能通过、运行时不发现设备」这类问题。
+        """
+        import asyncio as _asyncio
+
+        from .const import DEFAULT_PORT
+        from .protocol import ProtocolHandler, parse_device_list_frame
+
+        host = str(call.data["host"]).strip()
+        port = int(call.data.get("port", DEFAULT_PORT))
+        budget = float(call.data.get("timeout", 6))
+        handler = ProtocolHandler()
+        result: dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "connected": False,
+            "bytes_received": 0,
+            "frames": 0,
+            "devices": [],
+            "error": None,
+        }
+        try:
+            reader, writer = await _asyncio.wait_for(
+                _asyncio.open_connection(host, port), timeout=budget
+            )
+        except Exception as err:  # noqa: BLE001
+            result["error"] = f"connect failed: {err}"
+            _LOGGER.warning("TCP 诊断失败 %s:%s -> %s", host, port, result["error"])
+            return result
+
+        result["connected"] = True
+        loop = _asyncio.get_running_loop()
+        try:
+            writer.write(handler.build_read_device_list_frame())
+            await writer.drain()
+            deadline = loop.time() + budget
+            while loop.time() < deadline:
+                try:
+                    chunk = await _asyncio.wait_for(reader.read(4096), timeout=1.0)
+                except _asyncio.TimeoutError:
+                    continue
+                if not chunk:
+                    result["error"] = "peer closed connection"
+                    break
+                result["bytes_received"] += len(chunk)
+                for frame in handler.add_data(chunk):
+                    result["frames"] += 1
+                    parsed = parse_device_list_frame(frame)
+                    if parsed is not None:
+                        result["devices"].append(
+                            {
+                                "mac": parsed["macAddress"],
+                                "address": f"0x{parsed['networkAddress']:04X}",
+                                "type": parsed["deviceType"],
+                                "index": parsed["index"],
+                                "max": parsed["maxDevices"],
+                            }
+                        )
+                if result["devices"]:
+                    break
+        except Exception as err:  # noqa: BLE001
+            result["error"] = f"io failed: {err}"
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+
+        _LOGGER.info("TCP 诊断 %s:%s -> %s", host, port, result)
+        return result
+
     import homeassistant.helpers.config_validation as cv
     import voluptuous as vol
 
@@ -243,6 +325,26 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional("transparent", default=False): cv.boolean,
             }
         ),
+    )
+
+    from homeassistant.core import SupportsResponse
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DIAGNOSE_TCP,
+        _diagnose_tcp,
+        schema=vol.Schema(
+            {
+                vol.Required("host"): cv.string,
+                vol.Optional("port"): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=65535)
+                ),
+                vol.Optional("timeout"): vol.All(
+                    vol.Coerce(float), vol.Range(min=1, max=30)
+                ),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
     )
 
 
@@ -262,6 +364,7 @@ def _async_maybe_remove_services(
         SERVICE_SCAN_DEVICES,
         SERVICE_DESCRIBE,
         SERVICE_TRIGGER_SCENE,
+        SERVICE_DIAGNOSE_TCP,
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

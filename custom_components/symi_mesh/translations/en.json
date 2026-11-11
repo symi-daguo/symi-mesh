@@ -120,6 +120,38 @@
     "describe": {
       "name": "Describe",
       "description": "Write sync queue/loop-cache snapshots to the log (diagnostics, do not call frequently)."
+    },
+    "trigger_scene": {
+      "name": "Trigger scene",
+      "description": "Send a mesh scene id to every connected gateway (0x31 group control, or 0x34 transparent).",
+      "fields": {
+        "scene_id": {
+          "name": "Scene id",
+          "description": "Mesh scene number, 1-255."
+        },
+        "transparent": {
+          "name": "Transparent mode",
+          "description": "Use the 0x34 transparent frame for public/offline scene nodes."
+        }
+      }
+    },
+    "diagnose_tcp": {
+      "name": "TCP diagnostics",
+      "description": "Connect to a TCP gateway once, request the device list, and return the raw traffic plus parsed devices.",
+      "fields": {
+        "host": {
+          "name": "Host",
+          "description": "Gateway address, IP or hostname."
+        },
+        "port": {
+          "name": "Port",
+          "description": "Defaults to 4196."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Maximum seconds to wait, defaults to 6."
+        }
+      }
     }
   }
 }

@@ -275,18 +275,30 @@ class SymiMeshCoordinator:
         )
 
     def _finish_device_list(self) -> None:
-        if not self._device_list_done.is_set():
-            _LOGGER.warning(
-                "Device list timeout; proceeding with %d known devices",
-                len(self.registry.all_devices()),
-            )
-            self._device_list_done.set()
+        if self._device_list_done.is_set():
+            return
+        _LOGGER.warning(
+            "Device list timeout; proceeding with %d known devices",
+            len(self.registry.all_devices()),
+        )
+        self._device_list_done.set()
+        # 超时同样要补上后续动作：使能状态上报 + 首次状态查询。
+        # 原实现只在「收齐设备列表」的正常路径里调用，超时会导致设备虽被发现、
+        # 却永远不发状态查询，实体一直拿不到初值。
+        self.hass.async_create_task(self._after_device_list())
 
     # -- frame handling -------------------------------------------------------
 
     @callback
     def _handle_frame(self, frame: Any) -> None:
         opcode = frame.opcode
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "RX frame opcode=0x%02X status=0x%02X len=%d",
+                opcode,
+                getattr(frame, "status", 0) or 0,
+                len(getattr(frame, "payload", b"")),
+            )
         if opcode == OP_RESP_DEVICE_LIST:
             self._handle_device_list_frame(frame)
         elif opcode == OP_EVENT_NODE_STATUS:

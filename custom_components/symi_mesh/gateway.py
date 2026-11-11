@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 from typing import Any, Awaitable, Callable
 
 from .const import (
@@ -157,6 +158,10 @@ class GatewayTransport:
             asyncio.open_connection(self.host, self.port),
             timeout=DEFAULT_CONNECT_TIMEOUT,
         )
+        sock = self._writer.get_extra_info("socket")
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.connected = True
         self._connected_event.set()
         _LOGGER.info("Connected to Symi gateway at %s:%s", self.host, self.port)
@@ -215,6 +220,8 @@ class GatewayTransport:
             self._handle_data(data)
 
     def _handle_data(self, data: bytes) -> None:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("RX %d bytes: %s", len(data), data[:32].hex(" "))
         try:
             frames = self.protocol.add_data(data)
         except Exception:  # noqa: BLE001 - parser must never kill the loop
