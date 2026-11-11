@@ -40,7 +40,62 @@ async def test_user_menu_has_both_entries(hass: HomeAssistant) -> None:
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
     assert result["type"] is data_entry_flow.FlowResultType.MENU
-    assert set(result["menu_options"]) == {"gateway", "knx_sync"}
+    assert set(result["menu_options"]) == {"gateway", "knx_sync", "scene"}
+
+
+async def test_manual_scene_created(hass: HomeAssistant) -> None:
+    """手动录入场景：只填名称与场景号，不需要网关在线。"""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scene"}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.FORM
+    assert result["step_id"] == "scene"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"name": "回家模式", "scene_id": 7, "scene_mode": "group"}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result["title"] == "回家模式"
+    assert result["data"]["kind"] == "scene"
+    assert result["data"]["scene_id"] == 7
+    assert result["data"]["scene_mode"] == "group"
+
+
+async def test_manual_scene_requires_name(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scene"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"name": "   ", "scene_id": 1, "scene_mode": "group"}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.FORM
+    assert result["errors"] == {"name": "name_required"}
+
+
+async def test_manual_scene_duplicate_aborts(hass: HomeAssistant) -> None:
+    MockConfigEntry(
+        domain=DOMAIN,
+        data={"kind": "scene", "name": "回家", "scene_id": 9, "scene_mode": "group"},
+        unique_id="manual_scene:9",
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "scene"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"name": "回家2", "scene_id": 9, "scene_mode": "group"}
+    )
+    assert result["type"] is data_entry_flow.FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
 
 
 async def test_tcp_form_shown(hass: HomeAssistant) -> None:

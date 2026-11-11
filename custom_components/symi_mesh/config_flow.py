@@ -36,7 +36,10 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     CONF_QUERY_ON_STARTUP,
+    CONF_NAME,
     CONF_RECONNECT_INTERVAL,
+    CONF_SCENE_ID,
+    CONF_SCENE_MODE,
     CONF_SERIAL_PORT,
     CONF_SYNC_KNX_ENTITIES,
     CONF_SYNC_MESH_ENTITIES,
@@ -57,6 +60,9 @@ from .const import (
     DOMAIN,
     KIND_GATEWAY,
     KIND_KNX_SYNC,
+    KIND_SCENE,
+    SCENE_MODE_GROUP,
+    SCENE_MODE_TRANSPARENT,
     SYNC_DIRECTION_ONE_WAY,
     SYNC_DIRECTION_TWO_WAY,
     SYNCABLE_DOMAINS,
@@ -361,7 +367,61 @@ class SymiMeshConfigFlow(ConfigFlow, domain=DOMAIN):
     ):
         return self.async_show_menu(
             step_id="user",
-            menu_options=["gateway", "knx_sync"],
+            menu_options=["gateway", "knx_sync", "scene"],
+        )
+
+    # -- manual scene -------------------------------------------------------
+
+    async def async_step_scene(self, user_input: dict[str, Any] | None = None):
+        """手动录入一个 mesh 场景。
+
+        场景表存在网关内部（0x20 配置、0x31 按场景号触发），所以只要知道场景号
+        就能下发，不必等物理面板触发一次才建出实体。
+        """
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = str(user_input.get(CONF_NAME, "")).strip()
+            scene_id = int(user_input[CONF_SCENE_ID])
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            elif not 1 <= scene_id <= 255:
+                errors[CONF_SCENE_ID] = "invalid_scene_id"
+            else:
+                await self.async_set_unique_id(f"manual_scene:{scene_id}")
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=name,
+                    data={
+                        "kind": KIND_SCENE,
+                        CONF_NAME: name,
+                        CONF_SCENE_ID: scene_id,
+                        CONF_SCENE_MODE: user_input.get(
+                            CONF_SCENE_MODE, SCENE_MODE_GROUP
+                        ),
+                    },
+                )
+        return self.async_show_form(
+            step_id="scene",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_NAME): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.TEXT)
+                    ),
+                    vol.Required(CONF_SCENE_ID, default=1): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=255)
+                    ),
+                    vol.Required(
+                        CONF_SCENE_MODE, default=SCENE_MODE_GROUP
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[SCENE_MODE_GROUP, SCENE_MODE_TRANSPARENT],
+                            mode=SelectSelectorMode.LIST,
+                            translation_key="scene_mode",
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
         )
 
     # -- gateway ------------------------------------------------------------

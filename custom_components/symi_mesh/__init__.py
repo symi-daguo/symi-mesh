@@ -22,6 +22,7 @@ from .const import (
     DOMAIN,
     KIND_GATEWAY,
     KIND_KNX_SYNC,
+    KIND_SCENE,
     SERVICE_DESCRIBE,
     SERVICE_DIAGNOSE_TCP,
     SERVICE_RELOAD,
@@ -62,6 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) -> 
     kind = entry.data.get("kind", KIND_GATEWAY)
     if kind == KIND_KNX_SYNC:
         return await _async_setup_sync_entry(hass, entry)
+    if kind == KIND_SCENE:
+        return await _async_setup_scene_entry(hass, entry)
     return await _async_setup_gateway_entry(hass, entry)
 
 
@@ -69,6 +72,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: SymiMeshConfigEntry) ->
     kind = entry.data.get("kind", KIND_GATEWAY)
     if kind == KIND_KNX_SYNC:
         return await _async_unload_sync_entry(hass, entry)
+    if kind == KIND_SCENE:
+        return await _async_unload_scene_entry(hass, entry)
     return await _async_unload_gateway_entry(hass, entry)
 
 
@@ -155,6 +160,36 @@ async def _async_unload_sync_entry(
         await engine.async_stop()
     entry.runtime_data = SymiMeshRuntime(kind=KIND_KNX_SYNC)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Manual scene entries
+# ---------------------------------------------------------------------------
+
+
+async def _async_setup_scene_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
+    """手动录入的场景：不依赖网关连接，只往 scene 平台推一个实体。"""
+    from .runtime import SymiMeshRuntime
+
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_SCENE)
+    await hass.config_entries.async_forward_entry_setups(entry, ["scene"])
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    _LOGGER.info(
+        "已添加手动场景「%s」ID=%s", entry.title, entry.data.get("scene_id")
+    )
+    return True
+
+
+async def _async_unload_scene_entry(
+    hass: HomeAssistant, entry: SymiMeshConfigEntry
+) -> bool:
+    from .runtime import SymiMeshRuntime
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["scene"])
+    entry.runtime_data = SymiMeshRuntime(kind=KIND_SCENE)
+    return unload_ok
 
 
 # ---------------------------------------------------------------------------

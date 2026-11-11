@@ -63,6 +63,19 @@
           "debounce_ms": "状态变化后的合并等待时间，全部同步组共用。",
           "outbound_ms": "连续两次写入之间的最小间隔，全部同步组共用。"
         }
+      },
+      "scene": {
+        "title": "添加场景",
+        "description": "直接录入一个 mesh 场景。场景表保存在网关内部，按场景号触发，不需要先用物理面板触发一次才出现。",
+        "data": {
+          "name": "场景名称",
+          "scene_id": "场景 ID",
+          "scene_mode": "触发方式"
+        },
+        "data_description": {
+          "scene_id": "1-255，与网关或 APP 里配置的场景号一致",
+          "scene_mode": "标准群控走 0x31（网关内部场景表）；透传走 0x34（公版或离线场景节点）"
+        }
       }
     },
     "error": {
@@ -71,7 +84,8 @@
       "cannot_connect": "无法连接网关，请检查地址/端口/串口，并确认网关已上线",
       "name_required": "请填写名称",
       "need_two_entities": "请至少选择两个实体",
-      "duplicate_entities": "实体列表中存在重复项"
+      "duplicate_entities": "实体列表中存在重复项",
+      "invalid_scene_id": "场景 ID 需在 1-255 之间"
     },
     "abort": {
       "already_configured": "相同连接/实体组合的配置已存在"
@@ -126,6 +140,12 @@
       "options": {
         "two_way": "双向同步",
         "one_way": "单向同步（第一个 → 其余）"
+      }
+    },
+    "scene_mode": {
+      "options": {
+        "group": "标准群控（0x31）",
+        "transparent": "透传广播（0x34）"
       }
     }
   },

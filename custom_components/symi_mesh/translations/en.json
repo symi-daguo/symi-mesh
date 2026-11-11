@@ -55,6 +55,19 @@
           "debounce_ms": "Merge wait after a state change, shared by all groups.",
           "outbound_ms": "Minimum interval between writes, shared by all groups."
         }
+      },
+      "scene": {
+        "title": "Add a scene",
+        "description": "Register a mesh scene directly. The scene table lives in the gateway and is triggered by scene id, so no physical panel press is needed first.",
+        "data": {
+          "name": "Scene name",
+          "scene_id": "Scene id",
+          "scene_mode": "Trigger mode"
+        },
+        "data_description": {
+          "scene_id": "1-255, matching the scene number configured in the gateway or app",
+          "scene_mode": "Group control uses 0x31 (gateway scene table); transparent uses 0x34 (public or offline scene nodes)"
+        }
       }
     },
     "error": {
@@ -63,7 +76,8 @@
       "cannot_connect": "Cannot connect to the gateway. Check address/port/serial path and make sure the gateway is online.",
       "name_required": "Name is required",
       "need_two_entities": "Select at least two entities",
-      "duplicate_entities": "Duplicate entities in the list"
+      "duplicate_entities": "Duplicate entities in the list",
+      "invalid_scene_id": "Scene id must be between 1 and 255"
     },
     "abort": {
       "already_configured": "An entry with the same connection/entity set already exists"
@@ -105,6 +119,12 @@
       "options": {
         "two_way": "Two-way",
         "one_way": "One-way (first → rest)"
+      }
+    },
+    "scene_mode": {
+      "options": {
+        "group": "Group control (0x31)",
+        "transparent": "Transparent broadcast (0x34)"
       }
     }
   },

@@ -11,6 +11,7 @@ VERSION: Final = "1.0.0"
 # ---------------------------------------------------------------------------
 KIND_GATEWAY: Final = "gateway"
 KIND_KNX_SYNC: Final = "knx_sync"
+KIND_SCENE: Final = "scene"
 
 # ---------------------------------------------------------------------------
 # Connection
@@ -422,6 +423,12 @@ EVENT_SYNC_APPLIED: Final = f"{DOMAIN}_sync_applied"
 # Engine-facing names (knx_sync.py imports these exact identifiers).
 # ---------------------------------------------------------------------------
 CONF_NAME: Final = CONF_SYNC_NAME
+
+# 手动录入的场景（不需要等物理面板触发）
+CONF_SCENE_ID: Final = "scene_id"
+CONF_SCENE_MODE: Final = "scene_mode"
+SCENE_MODE_GROUP: Final = "group"           # 0x31 标准场景控制（网关内部场景表）
+SCENE_MODE_TRANSPARENT: Final = "transparent"  # 0x34 透传广播（公版/离线节点）
 CONF_ENTITIES: Final = CONF_SYNC_ENTITIES
 CONF_DIRECTION: Final = CONF_SYNC_DIRECTION
 DIRECTION_TWO_WAY: Final = SYNC_DIRECTION_TWO_WAY
