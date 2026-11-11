@@ -17,6 +17,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import SymiMeshCoordinator
+from .entity import build_device_info
 from .runtime import SymiMeshConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +35,6 @@ class SymiSceneEntity(Scene):
         device_name: str,
         scene_id: int,
     ) -> None:
-        from homeassistant.helpers.device_registry import DeviceInfo
 
         self._coordinator = coordinator
         self._mac = mac_address
@@ -47,11 +47,7 @@ class SymiSceneEntity(Scene):
             "name": device_name,
             "manufacturer": "SYMI 亖米",
         }
-        if coordinator.gateway_device_id is not None:
-            info["via_device_id"] = coordinator.gateway_device_id
-        else:  # pragma: no cover - HA < 2024.10
-            info["via_device"] = (DOMAIN, coordinator.gateway_identifier(coordinator.entry))
-        self._attr_device_info = DeviceInfo(**info)
+        self._attr_device_info = build_device_info(coordinator, info)
 
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the mesh network scene via 0x34 transparent broadcast.

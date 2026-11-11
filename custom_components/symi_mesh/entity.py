@@ -7,6 +7,7 @@ entities that represent it. Unique IDs are always derived from the device MAC
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -36,7 +37,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, DeviceRegistry
 from homeassistant.helpers.entity import Entity
 from homeassistant.util.color import (
     color_temperature_kelvin_to_mired,
@@ -60,6 +61,34 @@ from .const import (
 from .device import DeviceInfo as MeshDevice
 
 _LOGGER = logging.getLogger(__name__)
+
+# `DeviceRegistry.async_get_or_create` 的参数在不同 HA 版本间变过：
+#   2026.x 只有 via_device_id（传网关的 device.id）
+#   2025.x 只有 via_device（传 (DOMAIN, identifier)）
+# 硬编码任何一个都会在另一侧抛 TypeError，导致整台设备的实体全部创建失败
+# （实测 2025.11.3 下 67 台设备一个都建不出来）。这里运行时探测签名，
+# 不做版本号猜测。
+_VIA_DEVICE_ID_SUPPORTED = (
+    "via_device_id"
+    in inspect.signature(DeviceRegistry.async_get_or_create).parameters
+)
+
+
+def build_device_info(coordinator: Any, base: dict[str, Any]) -> DeviceInfo:
+    """构造 DeviceInfo，自动适配 via_device_id / via_device 两种 API。"""
+    gateway_id = getattr(coordinator, "gateway_device_id", None)
+    if gateway_id is not None and _VIA_DEVICE_ID_SUPPORTED:
+        try:
+            return DeviceInfo(**base, via_device_id=gateway_id)
+        except TypeError:  # pragma: no cover - 该版本 DeviceInfo 不认这个字段
+            pass
+    try:
+        return DeviceInfo(
+            **base,
+            via_device=(DOMAIN, coordinator.gateway_identifier(coordinator.entry)),
+        )
+    except TypeError:  # pragma: no cover - 极端情况：不带层级关系也要能建
+        return DeviceInfo(**base)
 
 
 def _mesh_to_mireds(color_temp_percent: int) -> int:
@@ -96,14 +125,7 @@ class SymiMeshEntity(Entity):
             "model": model,
             "manufacturer": "SYMI 亖米",
         }
-        if coordinator.gateway_device_id is not None:
-            device_info_kwargs["via_device_id"] = coordinator.gateway_device_id
-        else:  # pragma: no cover - HA < 2024.10 fallback
-            device_info_kwargs["via_device"] = (
-                DOMAIN,
-                coordinator.gateway_identifier(coordinator.entry),
-            )
-        self._attr_device_info = DeviceInfo(**device_info_kwargs)
+        self._attr_device_info = build_device_info(coordinator, device_info_kwargs)
 
     @property
     def available(self) -> bool:
@@ -668,6 +690,14 @@ class SymiLock(SymiMeshEntity, LockEntity):
 # ---------------------------------------------------------------------------
 # Diagnostic sensors (voice controller / TV box — no standard control domain)
 # ---------------------------------------------------------------------------
+
+
+# HA 2026.11 起 climate 的温度属性改名为 native_*，之前的版本只认旧名字。
+# 类里统一实现 native_*，再给旧版本补别名，一份代码同时兼容两侧。
+if not hasattr(ClimateEntity, "native_current_temperature"):  # pragma: no cover
+    SymiClimate.current_temperature = SymiClimate.native_current_temperature  # type: ignore[assignment]
+    SymiClimate.target_temperature = SymiClimate.native_target_temperature  # type: ignore[assignment]
+    SymiClimate._attr_temperature_unit = UnitOfTemperature.CELSIUS  # type: ignore[attr-defined]
 
 
 class SymiDiagnosticSensor(SymiMeshEntity, SensorEntity):

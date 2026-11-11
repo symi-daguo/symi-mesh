@@ -282,6 +282,14 @@ tests/
 
 ## 变更记录
 
+### 1.2.21
+- **修致命 bug：HA 2025.x 上所有实体建不出来**。`DeviceRegistry.async_get_or_create` 的层级参数在版本间变过——2025.x 只认 `via_device=(DOMAIN, identifier)`，2026.x 只认 `via_device_id=设备id`。原代码判反了（注释说 `else` 是「HA < 2024.10 回退」，实际 `via_device_id` 才是新版参数），且 `gateway_device_id` 恒非空，永远走错分支。实测 2025.11.3 下 67 台设备一个都没创建
+  - 改为运行时探测签名：`"via_device_id" in inspect.signature(DeviceRegistry.async_get_or_create).parameters`
+  - 抽出 `entity.build_device_info()`，`entity.py` 与 `scene.py` 共用同一套逻辑
+- 最低 HA 版本回到 **2024.8**（1.2.19 误设成 2026.11，导致 2025.x 根本装不上）
+- climate 温度属性双版本兼容：类里实现 `native_*`，旧版本自动补 `current_temperature` / `target_temperature` 别名
+- 新增 `tests/test_device_info.py`（4 例），覆盖两种 API 与无网关 id 的情况
+
 ### 1.2.20
 - 修设备列表超时路径：原来超时只置位不再往下走，导致「设备已发现但永远不发状态查询」，实体拿不到初值。现在超时同样执行「使能状态上报 + 首次状态查询」
 - TCP 连接关闭 Nagle（`TCP_NODELAY`）：控制帧只有 5 字节，Nagle 会攒包，最多引入 40ms 延迟
